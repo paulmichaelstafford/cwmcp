@@ -1,0 +1,2 @@
+# cwmcp
+MCP for CollapsingWave
