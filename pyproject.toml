@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cwmcp"
+version = "0.1.0"
+description = "CollapsingWave MCP Server — audiobook pipeline tools for Claude Code"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]",
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
