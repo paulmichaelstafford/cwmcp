@@ -16,19 +16,19 @@ pip install -e ".[dev]"
 
 ### 2. Configure
 
-Copy the example config and fill in your credentials:
+Run the setup script to create your config:
+
+```bash
+./setup.sh
+```
+
+This prompts for your cwbe credentials and content path, then writes `~/.cwmcp/config.properties`.
+
+Alternatively, copy and edit the example config manually:
 
 ```bash
 mkdir -p ~/.cwmcp
 cp config.example.properties ~/.cwmcp/config.properties
-```
-
-Edit `~/.cwmcp/config.properties`:
-
-```properties
-cwbe_user=your-email@example.com
-cwbe_password=your-password
-content_path=/path/to/your/audio/content
 ```
 
 - `cwbe_user` / `cwbe_password`: Your cwbe service account credentials
