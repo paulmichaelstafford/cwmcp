@@ -2,7 +2,13 @@
 
 ## What This Is
 
-MCP server for the CollapsingWave audiobook pipeline. Exposes tools for checking chapter status, building translations, testing alignments, and uploading chapters.
+MCP server for the CollapsingWave audiobook pipeline. Exposes tools for checking chapter status, generating audio, building translations, testing alignments, and uploading chapters.
+
+Credentials (cwbe service account, ElevenLabs API key) are stored in `~/.cwmcp/config.properties` — see `config.example.properties` for the format.
+
+## Working with Book Content
+
+**All publication files (books, chapters, audio, translations) live under the `content_path` configured in `~/.cwmcp/config.properties`**, not in this repo. When asked to work on books, edit chapters, view content, or do anything involving publication files, always read `content_path` from the config and operate there. Do not ask — just do it.
 
 ## Running Tests
 
@@ -16,7 +22,7 @@ PYTHONPATH=src python3 -m pytest tests/ -v
 - `src/cwmcp/server.py` — MCP entry point, all tool registrations
 - `src/cwmcp/config.py` — Reads ~/.cwmcp/config.properties
 - `src/cwmcp/tools/` — Tool implementations (thin wrappers)
-- `src/cwmcp/lib/` — Core logic (translations, uploads, cwbe client)
+- `src/cwmcp/lib/` — Core logic (translations, uploads, cwbe client, audio generation)
 - `tests/` — Unit tests
 
 ## Key Concepts
@@ -26,3 +32,93 @@ PYTHONPATH=src python3 -m pytest tests/ -v
 - 18 combos per chapter (9 langs x 2 levels)
 - Coverage thresholds: 70% European-European, 40% involving CJK
 - cwbe URL is hardcoded: https://be.collapsingwave.com
+
+## Quick Start — New Chapter Pipeline
+
+When asked to do "chapter N" for a book, this is the full workflow.
+
+### Step-by-step (per chapter)
+
+0. **Get publication info** — use `list_publications` to find the publication ID, then `get_publication_readme` to read the style guide, voice config, topic backlog, and chapter structure rules. If the book has a glossary in its readme, use the localized proper noun forms.
+
+1. **Check what's done** — use `list_uploaded_chapters` to see which chapters are already uploaded. Determine the next chapter number.
+
+2. **Write chapter.md** for each lang/level combo (18 total: 9 langs x 2 levels)
+   - Path: `{content_path}/{onetime|continuous}/{book}/chapter-NNNN-slug/{lang}/{level}/chapter.md`
+   - Front matter: `title: Chapter Title`
+   - Body: `[narrator] Text here.` — all text is narrated (no character voices)
+   - B1 = simple, B2 = intermediate
+   - **Max 200 words per chapter** (both levels). Create more chapters if needed rather than exceeding the limit.
+
+3. **Generate audio** — use `generate_audio` or `generate_audio_batch` tools
+   - Calls ElevenLabs TTS, caches `audio.mp3` + `marks.json` + `marks_in_milliseconds.json` next to chapter.md
+   - Skips if audio.mp3 already exists (safe to re-run)
+   - Run max 3 at a time (ElevenLabs rate limits)
+   - **EXPENSIVE** — ElevenLabs TTS costs real money per character. Never delete audio.mp3, marks.json, or marks_in_milliseconds.json unless they have been successfully uploaded.
+
+4. **Build translations** from cached marks
+   - **Dispatch one agent per lang/level combo** — all 16 non-EN variants can run in parallel
+   - Each agent writes a manual translation script (e.g. `scripts/build_el7_fr_b1.py`) and runs it
+   - Uses `build_chapter_translations.py` with `build_and_save()` for European alignment via cwbe + manual CJK word pairs
+   - For failing marks, provide manual overrides with alignment data
+   - **Must happen after step 3** because translations must match marks.json 1:1
+   - **Every mark must have non-empty `tokenAlignments` for all 8 target languages** — cwbe rejects uploads with any empty alignments. The local coverage check may pass but cwbe will reject.
+
+5. **Upload** — use `upload_chapter` or `upload_batch` tools
+   - Sends cached audio + marks + translations to cwbe
+   - Max 3 concurrent uploads (cwbe is on limited hardware)
+
+### File structure per chapter per lang per level
+```
+chapter.md                    # source text with speaker markup
+audio.mp3                     # cached ElevenLabs output (deleted after successful upload)
+marks.json                    # sentence boundaries with UUIDs
+marks_in_milliseconds.json    # mark UUID -> millisecond offset
+translations.json             # 8 target languages with word alignments
+```
+
+### Languages & Levels
+- 9 languages: EN, FR, ES, DE, IT, PT, ZH, JA, KO
+- 2 levels: B1 (simple), B2 (intermediate)
+- = 18 chapter variants per story chapter
+
+## Writing Rules for Alignment-Friendly Text
+
+Chapter text must be alignment-friendly **before** generating audio. Poorly structured text causes exponentially more alignment work.
+
+- **Every sentence must be at least 5 words.** No fragments ("Gray.", "Silent.", "DELETE."). Merge fragments into full sentences.
+- **Aim for 10-15 marks per chapter.** Each `[narrator]` line may split into multiple marks at sentence boundaries. Short sentences = more marks = more alignment work. Chapter with 35 marks takes 3-4x longer than one with 12 marks.
+- **Longer sentences help CJK**: the 40% coverage threshold is easier to hit with more characters per mark. A 3-word sentence needs every word mapped; a 15-word sentence can tolerate some gaps.
+
+## Audio Production Style
+
+- **Narrator only** — all text uses a single narrator voice. No character voices.
+- **No sound effects** — do not use `[sfx:...]` tags. Clean narrator audio only.
+
+## Translation & Alignment Rules
+
+- **Always use manual translations.** Claude provides translations + word-pair alignments. This is the only approach that reliably passes cwbe validation. Reasons:
+  - Correct domain terminology and proper noun handling vs Azure's generic translations
+  - Consistent literary register — Azure mixes formal/polite with plain form in JA/KO
+  - Phrase-level alignments with ~93% target coverage for CJK vs awesome-align's ~47%
+  - cwbe rejects uploads where any mark has <40% CJK coverage or <70% European coverage
+- **Auto builder is a fallback only** — use it to get Azure translations as a reference if stuck, but never use its output directly for upload. The alignments it produces will be rejected by cwbe for CJK targets.
+- Format: `TokenAlignment { sourceStart, sourceEnd, targetStart, targetEnd }` — all inclusive character offsets.
+- Target languages: EN, FR, ES, DE, IT, PT, ZH, JA, KO (8 targets per source, excluding source language).
+- **Alignment coverage required** — cwbe validates that alphanumeric characters (`isLetterOrDigit()`) in both source and target text are covered by alignment ranges. Thresholds: **70% for European-European pairs**, **40% for any pair involving CJK**.
+
+## Available MCP Tools
+
+- `list_publications` — list all publications with IDs and titles
+- `list_uploaded_chapters` — see what's been uploaded for a publication
+- `get_publication_readme` — fetch style guide, voice config, topic backlog
+- `list_books` — list local book directories
+- `chapter_status` — check local file status for a chapter's 18 combos
+- `generate_audio` — generate TTS for a single lang/level combo
+- `generate_audio_batch` — generate TTS for all combos missing audio
+- `build_translations` — build translations.json using Azure + align
+- `align_text` — test alignment on a single source/target pair
+- `check_coverage` — check alignment coverage for a translations.json
+- `upload_chapter` — upload a single lang/level combo
+- `upload_batch` — upload all ready combos for a chapter
+- `download_chapters` — download all chapters for a publication (backup)

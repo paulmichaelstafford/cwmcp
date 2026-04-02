@@ -10,6 +10,8 @@ from cwmcp.tools.check_coverage import check_translations_coverage
 from cwmcp.tools.align_text import align_text_pair
 from cwmcp.tools.build_translations import build_chapter_translations
 from cwmcp.tools.upload import upload_single, upload_chapter_batch
+from cwmcp.tools.generate_audio import generate_single, generate_batch
+from cwmcp.tools.download_chapters import download_publication_chapters
 
 mcp = FastMCP("cwmcp", instructions="CollapsingWave audiobook pipeline tools")
 
@@ -139,6 +141,101 @@ def upload_batch(book: str, chapter_number: int, workers: int = 3) -> str:
     workers = min(workers, 3)
     result = upload_chapter_batch(client, config.content_path, book, chapter_number, workers)
     return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def generate_audio(book: str, chapter_number: int, lang: str, level: str, voice_id: str | None = None) -> str:
+    """Generate audio for a single lang/level combo using ElevenLabs TTS.
+    Caches audio.mp3, marks.json, marks_in_milliseconds.json next to chapter.md.
+    Skips if audio already exists. COSTS MONEY per character — use carefully.
+
+    Args:
+        book: Book directory name (e.g. "everyday-life")
+        chapter_number: Chapter number (e.g. 7)
+        lang: Language code (e.g. "EN", "FR", "JA")
+        level: "B1" or "B2"
+        voice_id: Optional ElevenLabs voice ID (defaults to George narrator)
+    """
+    config = get_config()
+    result = generate_single(
+        config.elevenlabs_api_key, config.content_path, book, chapter_number, lang, level, voice_id,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def generate_audio_batch(book: str, chapter_number: int, voice_id: str | None = None) -> str:
+    """Generate audio for all lang/level combos that have chapter.md but no audio.mp3.
+    COSTS MONEY — generates up to 18 TTS calls. Use carefully.
+
+    Args:
+        book: Book directory name (e.g. "everyday-life")
+        chapter_number: Chapter number (e.g. 7)
+        voice_id: Optional ElevenLabs voice ID (defaults to George narrator)
+    """
+    config = get_config()
+    results = generate_batch(
+        config.elevenlabs_api_key, config.content_path, book, chapter_number, voice_id,
+    )
+    return json.dumps(results, indent=2)
+
+
+@mcp.tool()
+def download_chapters(publication_id: str, output_dir: str) -> str:
+    """Download all chapters for a publication to a local directory.
+    Useful for backups or migrating content.
+
+    Args:
+        publication_id: Publication UUID from cwbe
+        output_dir: Local directory to save files to
+    """
+    client = get_client()
+    result = download_publication_chapters(client, publication_id, output_dir)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def list_publications() -> str:
+    """List all publications from cwbe with their IDs, titles, and types."""
+    client = get_client()
+    pubs = client.get_publications()
+    summary = [
+        {"id": p["id"], "title": p["title"], "type": p["publicationType"], "isComplete": p.get("isComplete", False)}
+        for p in pubs
+    ]
+    return json.dumps(summary, indent=2)
+
+
+@mcp.tool()
+def list_uploaded_chapters(publication_id: str) -> str:
+    """List all chapters uploaded to cwbe for a publication.
+    Useful for determining what's been completed and what chapter number comes next.
+
+    Args:
+        publication_id: Publication UUID
+    """
+    client = get_client()
+    chapters = client.get_all_chapters(publication_id)
+    summary = [
+        {"id": c["id"], "title": c.get("title", ""), "language": c.get("language", ""), "level": c.get("level", "")}
+        for c in chapters
+    ]
+    return json.dumps({"total": len(chapters), "chapters": summary}, indent=2)
+
+
+@mcp.tool()
+def get_publication_readme(publication_id: str) -> str:
+    """Get the readme for a publication from cwbe.
+
+    Args:
+        publication_id: Publication UUID
+    """
+    client = get_client()
+    pubs = client.get_publications()
+    pub = next((p for p in pubs if p["id"] == publication_id), None)
+    if not pub:
+        return json.dumps({"error": f"Publication {publication_id} not found"})
+    return pub.get("readme", "")
 
 
 if __name__ == "__main__":

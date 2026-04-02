@@ -9,11 +9,13 @@ def test_load_config_reads_properties(tmp_path):
     config_file.write_text(
         "cwbe_user=test@example.com\n"
         "cwbe_password=secret123\n"
+        "elevenlabs_api_key=sk_test123\n"
         "content_path=/tmp/audio\n"
     )
     config = load_config(str(config_file))
     assert config.cwbe_user == "test@example.com"
     assert config.cwbe_password == "secret123"
+    assert config.elevenlabs_api_key == "sk_test123"
     assert config.content_path == "/tmp/audio"
 
 def test_load_config_missing_file():
@@ -33,6 +35,7 @@ def test_load_config_ignores_comments_and_blank_lines(tmp_path):
         "\n"
         "cwbe_user=test@example.com\n"
         "cwbe_password=secret123\n"
+        "elevenlabs_api_key=sk_test123\n"
         "content_path=/tmp/audio\n"
     )
     config = load_config(str(config_file))

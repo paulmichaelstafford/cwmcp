@@ -96,3 +96,43 @@ class CwbeClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    def get_all_chapters(self, publication_id: str) -> list[dict]:
+        """Get all chapters using pagination."""
+        chapters = []
+        page = 0
+        while True:
+            resp = requests.get(
+                f"{self.base_url}/api/service/publications/{publication_id}/chapters",
+                params={"page": page, "size": 100, "direction": "ASC"},
+                auth=self.auth,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            chapters.extend(data.get("content", []))
+            if page + 1 >= data.get("totalPages", 1):
+                break
+            page += 1
+        return chapters
+
+    def get_chapter_download_url(self, publication_id: str, chapter_id: str) -> str:
+        """Get signed download URL for a chapter."""
+        resp = requests.get(
+            f"{self.base_url}/api/service/publications/{publication_id}/chapters/{chapter_id}/download-url",
+            auth=self.auth,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.text.strip().strip('"')
+
+    def get_publications(self) -> list[dict]:
+        """Get all publications."""
+        resp = requests.get(
+            f"{self.base_url}/api/service/publications",
+            params={"page": 0, "size": 100},
+            auth=self.auth,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json().get("content", [])
