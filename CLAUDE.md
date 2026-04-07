@@ -4,6 +4,8 @@
 
 MCP server for the CollapsingWave audiobook pipeline. Exposes tools for checking chapter status, generating audio, building translations, testing alignments, and uploading chapters.
 
+**This is a public repo.** Keep it clean — no one-off scripts, hardcoded secrets, throwaway files, or temp debugging code. If something is not reusable, it does not belong here.
+
 Credentials (cwbe service account, ElevenLabs API key) are stored in `~/.cwmcp/config.properties` — see `config.example.properties` for the format.
 
 ## Working with Book Content
@@ -32,6 +34,7 @@ PYTHONPATH=src python3 -m pytest tests/ -v
 - 18 combos per chapter (9 langs x 2 levels)
 - Coverage thresholds: 70% European-European, 40% involving CJK
 - cwbe URL is hardcoded: https://be.collapsingwave.com
+- Swagger UI is available at https://be.collapsingwave.com/api/open/swagger-ui.html to browse cwbe endpoints. Username and password are in `SecurityConfig.kt` in cwbe.
 
 ## Quick Start — New Chapter Pipeline
 
@@ -89,6 +92,12 @@ Chapter text must be alignment-friendly **before** generating audio. Poorly stru
 - **Every sentence must be at least 5 words.** No fragments ("Gray.", "Silent.", "DELETE."). Merge fragments into full sentences.
 - **Aim for 10-15 marks per chapter.** Each `[narrator]` line may split into multiple marks at sentence boundaries. Short sentences = more marks = more alignment work. Chapter with 35 marks takes 3-4x longer than one with 12 marks.
 - **Longer sentences help CJK**: the 40% coverage threshold is easier to hit with more characters per mark. A 3-word sentence needs every word mapped; a 15-word sentence can tolerate some gaps.
+
+## Localization Rules
+
+- **No Latin characters in CJK text.** Chinese (ZH), Japanese (JA), and Korean (KO) chapter text must use fully localized forms for all proper nouns, place names, and terminology. No English words in Latin script should appear in the narrative body text.
+- **European languages must translate key terms.** Concepts like "Victory Mansions", "Big Brother", "telescreen", and "Victory Gin" must be translated into each target language — not left in English. Personal names (Winston, O'Brien, Goldstein) may remain in their original form as is conventional in published translations.
+- **Consistency across chapters.** If a term is localized in one chapter, it must use the same localized form in all chapters. Use the glossary in the publication readme.
 
 ## Audio Production Style
 

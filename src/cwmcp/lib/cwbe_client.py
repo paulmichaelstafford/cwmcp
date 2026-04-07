@@ -126,6 +126,33 @@ class CwbeClient:
         resp.raise_for_status()
         return resp.text.strip().strip('"')
 
+    def update_publication_readme(self, publication_id: str, readme: str) -> dict:
+        """Update readme for a publication. Fetches current state, patches readme, PUTs back."""
+        import json as _json
+        pubs = self.get_publications()
+        pub = next((p for p in pubs if p["id"] == publication_id), None)
+        if not pub:
+            raise ValueError(f"Publication {publication_id} not found")
+        dto = {
+            "id": pub["id"],
+            "title": pub["title"],
+            "publicationType": pub["publicationType"],
+            "copyrightTerms": pub["copyrightTerms"],
+            "archived": pub["archived"],
+            "isComplete": pub["isComplete"],
+            "headers": pub["headers"],
+            "descriptions": pub["descriptions"],
+            "readme": readme,
+        }
+        resp = requests.put(
+            f"{self.base_url}/api/service/publications/{publication_id}",
+            auth=self.auth,
+            files={"dto": (None, _json.dumps(dto), "application/json")},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def get_publications(self) -> list[dict]:
         """Get all publications."""
         resp = requests.get(

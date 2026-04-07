@@ -22,6 +22,9 @@ fi
 read -p "cwbe user (email): " cwbe_user
 read -s -p "cwbe password: " cwbe_password
 echo ""
+read -p "Swagger username: " swagger_user
+read -s -p "Swagger password: " swagger_password
+echo ""
 read -p "content path (directory with onetime/ and continuous/): " content_path
 
 # Expand ~ if used
@@ -41,6 +44,8 @@ cat > "$CONFIG_FILE" <<EOF
 # cwmcp configuration
 cwbe_user=$cwbe_user
 cwbe_password=$cwbe_password
+swagger_user=$swagger_user
+swagger_password=$swagger_password
 content_path=$content_path
 EOF
 

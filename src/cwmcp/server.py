@@ -1,5 +1,6 @@
 # src/cwmcp/server.py
 import json
+from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from cwmcp.config import load_config
@@ -90,7 +91,7 @@ def align_text(source_lang: str, source_text: str, target_lang: str, target_text
 
 
 @mcp.tool()
-def build_translations(book: str, chapter_number: int, level: str, overrides: str | None = None) -> str:
+def build_translations(book: str, chapter_number: int, level: str, overrides: str | dict | None = None) -> str:
     """Build translations.json for a chapter using Azure Translate + awesome-align.
     Optionally accepts manual overrides for marks that fail coverage.
 
@@ -102,7 +103,12 @@ def build_translations(book: str, chapter_number: int, level: str, overrides: st
     """
     config = get_config()
     client = get_client()
-    override_data = json.loads(overrides) if overrides else None
+    if overrides is None:
+        override_data = None
+    elif isinstance(overrides, str):
+        override_data = json.loads(overrides)
+    else:
+        override_data = overrides
     result = build_chapter_translations(
         client, config.content_path, book, chapter_number, level, override_data,
     )
@@ -236,6 +242,19 @@ def get_publication_readme(publication_id: str) -> str:
     if not pub:
         return json.dumps({"error": f"Publication {publication_id} not found"})
     return pub.get("readme", "")
+
+
+@mcp.tool()
+def update_publication_readme(publication_id: str, readme: str) -> str:
+    """Update the readme for a publication on cwbe.
+
+    Args:
+        publication_id: Publication UUID
+        readme: Full markdown content to replace the existing readme
+    """
+    client = get_client()
+    result = client.update_publication_readme(publication_id, readme)
+    return json.dumps({"ok": True, "id": result.get("storedDataId", publication_id)})
 
 
 if __name__ == "__main__":
