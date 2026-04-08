@@ -257,5 +257,24 @@ def update_publication_readme(publication_id: str, readme: str) -> str:
     return json.dumps({"ok": True, "id": result.get("storedDataId", publication_id)})
 
 
+@mcp.tool()
+def update_chapter_metadata(publication_id: str, chapter_id: str, title: str,
+                            language: str, level: str) -> str:
+    """Update chapter metadata (title, language, level) without re-uploading audio.
+
+    Args:
+        publication_id: Publication UUID
+        chapter_id: Chapter UUID
+        title: New chapter title
+        language: Language code (e.g. "EN", "FR", "JA")
+        level: "B1" or "B2"
+    """
+    client = get_client()
+    result = client.update_chapter_metadata(
+        publication_id, chapter_id, title, language.upper(), level.upper(),
+    )
+    return json.dumps({"ok": True, "job_id": result.get("id", "")})
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

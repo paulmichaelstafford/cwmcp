@@ -126,6 +126,25 @@ class CwbeClient:
         resp.raise_for_status()
         return resp.text.strip().strip('"')
 
+    def update_chapter_metadata(self, publication_id: str, chapter_id: str,
+                                title: str, language: str, level: str,
+                                audio_ai_generated: bool = True) -> dict:
+        """Update chapter metadata (title, language, level) without re-uploading audio."""
+        resp = requests.patch(
+            f"{self.base_url}/api/service/publications/{publication_id}/chapters/{chapter_id}",
+            auth=self.auth,
+            json={
+                "id": chapter_id,
+                "title": title,
+                "language": language,
+                "level": level,
+                "audioAiGenerated": audio_ai_generated,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def update_publication_readme(self, publication_id: str, readme: str) -> dict:
         """Update readme for a publication. Fetches current state, patches readme, PUTs back."""
         import json as _json
