@@ -8,6 +8,7 @@ def build_translations_auto(
     source_lang: str,
     marks: list[dict],
     manual_overrides: dict | None = None,
+    target_lang: str | None = None,
 ) -> tuple[list, list, list]:
     """Build translations.json using cwbe translate + align endpoints.
 
@@ -16,11 +17,16 @@ def build_translations_auto(
         source_lang: Source language code (e.g. "EN")
         marks: List of mark dicts from marks.json
         manual_overrides: Optional {mark_idx: {lang: {"text": ..., "tokenAlignments": [...]}}}
+        target_lang: Optional single target language to process (e.g. "DE").
+                     If set, only translates+aligns for that language.
 
     Returns: (translations_list, errors, warnings)
     """
     manual_overrides = manual_overrides or {}
-    target_langs = sorted(ALL_LANGS - {source_lang})
+    if target_lang:
+        target_langs = [target_lang.upper()]
+    else:
+        target_langs = sorted(ALL_LANGS - {source_lang})
     texts = [m["text"] for m in marks]
 
     all_translations = client.translate_texts(source_lang, texts)

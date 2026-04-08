@@ -91,7 +91,7 @@ def align_text(source_lang: str, source_text: str, target_lang: str, target_text
 
 
 @mcp.tool()
-def build_translations(book: str, chapter_number: int, level: str, overrides: str | dict | None = None) -> str:
+def build_translations(book: str, chapter_number: int, level: str, overrides: str | dict | None = None, target_lang: str | None = None) -> str:
     """Build translations.json for a chapter using Azure Translate + awesome-align.
     Optionally accepts manual overrides for marks that fail coverage.
 
@@ -100,6 +100,7 @@ def build_translations(book: str, chapter_number: int, level: str, overrides: st
         chapter_number: Chapter number (e.g. 7)
         level: "b1" or "b2"
         overrides: Optional JSON string with manual overrides: {"mark_idx": {"lang": {"text": "...", "tokenAlignments": [...]}}}
+        target_lang: Optional single target language (e.g. "DE"). If set, only processes that language and merges into existing translations.json.
     """
     config = get_config()
     client = get_client()
@@ -111,6 +112,7 @@ def build_translations(book: str, chapter_number: int, level: str, overrides: st
         override_data = overrides
     result = build_chapter_translations(
         client, config.content_path, book, chapter_number, level, override_data,
+        target_lang=target_lang,
     )
     return json.dumps(result, indent=2)
 
