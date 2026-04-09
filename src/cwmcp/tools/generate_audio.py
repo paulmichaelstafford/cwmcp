@@ -25,13 +25,12 @@ def find_chapter_dir(content_path: str, book: str, chapter_number: int) -> str |
 
 
 def generate_single(
-    api_key: str,
+    cwtts_url: str,
     content_path: str,
     book: str,
     chapter_number: int,
     lang: str,
     level: str,
-    voice_id: str | None = None,
 ) -> dict:
     """Generate audio for a single lang/level combo."""
     chapter_base = find_chapter_dir(content_path, book, chapter_number)
@@ -42,19 +41,18 @@ def generate_single(
     if not os.path.exists(chapter_md):
         return {"status": "error", "message": f"No chapter.md at {chapter_md}"}
 
-    kwargs = {"api_key": api_key, "chapter_md_path": chapter_md}
-    if voice_id:
-        kwargs["voice_id"] = voice_id
-
-    return generate_chapter_audio(**kwargs)
+    return generate_chapter_audio(
+        cwtts_url=cwtts_url,
+        chapter_md_path=chapter_md,
+        language=lang.upper(),
+    )
 
 
 def generate_batch(
-    api_key: str,
+    cwtts_url: str,
     content_path: str,
     book: str,
     chapter_number: int,
-    voice_id: str | None = None,
 ) -> list[dict]:
     """Generate audio for all lang/level combos that have chapter.md but no audio.mp3."""
     chapter_base = find_chapter_dir(content_path, book, chapter_number)
@@ -72,11 +70,11 @@ def generate_batch(
                 results.append({"lang": lang.upper(), "level": level.upper(), "status": "skipped", "message": "Audio already exists"})
                 continue
 
-            kwargs = {"api_key": api_key, "chapter_md_path": chapter_md}
-            if voice_id:
-                kwargs["voice_id"] = voice_id
-
-            result = generate_chapter_audio(**kwargs)
+            result = generate_chapter_audio(
+                cwtts_url=cwtts_url,
+                chapter_md_path=chapter_md,
+                language=lang.upper(),
+            )
             result["lang"] = lang.upper()
             result["level"] = level.upper()
             results.append(result)

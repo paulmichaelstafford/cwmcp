@@ -152,38 +152,35 @@ def upload_batch(book: str, chapter_number: int, workers: int = 3) -> str:
 
 
 @mcp.tool()
-def generate_audio(book: str, chapter_number: int, lang: str, level: str, voice_id: str | None = None) -> str:
-    """Generate audio for a single lang/level combo using ElevenLabs TTS.
+def generate_audio(book: str, chapter_number: int, lang: str, level: str) -> str:
+    """Generate audio for a single lang/level combo using cwtts TTS.
     Caches audio.mp3, marks.json, marks_in_milliseconds.json next to chapter.md.
-    Skips if audio already exists. COSTS MONEY per character — use carefully.
+    Skips if audio already exists.
 
     Args:
         book: Book directory name (e.g. "everyday-life")
         chapter_number: Chapter number (e.g. 7)
         lang: Language code (e.g. "EN", "FR", "JA")
         level: "B1" or "B2"
-        voice_id: Optional ElevenLabs voice ID (defaults to George narrator)
     """
     config = get_config()
     result = generate_single(
-        config.elevenlabs_api_key, config.content_path, book, chapter_number, lang, level, voice_id,
+        config.cwtts_url, config.content_path, book, chapter_number, lang, level,
     )
     return json.dumps(result, indent=2)
 
 
 @mcp.tool()
-def generate_audio_batch(book: str, chapter_number: int, voice_id: str | None = None) -> str:
+def generate_audio_batch(book: str, chapter_number: int) -> str:
     """Generate audio for all lang/level combos that have chapter.md but no audio.mp3.
-    COSTS MONEY — generates up to 18 TTS calls. Use carefully.
 
     Args:
         book: Book directory name (e.g. "everyday-life")
         chapter_number: Chapter number (e.g. 7)
-        voice_id: Optional ElevenLabs voice ID (defaults to George narrator)
     """
     config = get_config()
     results = generate_batch(
-        config.elevenlabs_api_key, config.content_path, book, chapter_number, voice_id,
+        config.cwtts_url, config.content_path, book, chapter_number,
     )
     return json.dumps(results, indent=2)
 

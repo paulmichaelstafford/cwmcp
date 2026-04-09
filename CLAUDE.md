@@ -6,7 +6,7 @@ MCP server for the CollapsingWave audiobook pipeline. Exposes tools for checking
 
 **This is a public repo.** Keep it clean — no one-off scripts, hardcoded secrets, throwaway files, or temp debugging code. If something is not reusable, it does not belong here.
 
-Credentials (cwbe service account, ElevenLabs API key) are stored in `~/.cwmcp/config.properties` — see `config.example.properties` for the format.
+Credentials (cwbe service account, cwtts URL) are stored in `~/.cwmcp/config.properties` — see `config.example.properties` for the format.
 
 ## Working with Book Content
 
@@ -54,10 +54,11 @@ When asked to do "chapter N" for a book, this is the full workflow.
    - **Max 200 words per chapter** (both levels). Create more chapters if needed rather than exceeding the limit.
 
 3. **Generate audio** — use `generate_audio` or `generate_audio_batch` tools
-   - Calls ElevenLabs TTS, caches `audio.mp3` + `marks.json` + `marks_in_milliseconds.json` next to chapter.md
+   - Calls cwtts service (Kokoro for EN, Voxtral/Mistral API for FR, Fish Audio API for ES/DE/IT/PT/ZH/JA/KO)
+   - Caches `audio.mp3` + `marks.json` + `marks_in_milliseconds.json` next to chapter.md
    - Skips if audio.mp3 already exists (safe to re-run)
-   - Run max 3 at a time (ElevenLabs rate limits)
-   - **EXPENSIVE** — ElevenLabs TTS costs real money per character. Never delete audio.mp3, marks.json, or marks_in_milliseconds.json unless they have been successfully uploaded.
+   - EN is free (Kokoro, local). Other languages use cloud APIs (cheap — cents per chapter).
+   - Never delete audio.mp3, marks.json, or marks_in_milliseconds.json unless they have been successfully uploaded.
 
 4. **Build translations** from cached marks
    - **Dispatch one agent per lang/level combo** — all 16 non-EN variants can run in parallel
@@ -74,7 +75,7 @@ When asked to do "chapter N" for a book, this is the full workflow.
 ### File structure per chapter per lang per level
 ```
 chapter.md                    # source text with speaker markup
-audio.mp3                     # cached ElevenLabs output (deleted after successful upload)
+audio.mp3                     # cached TTS output (deleted after successful upload)
 marks.json                    # sentence boundaries with UUIDs
 marks_in_milliseconds.json    # mark UUID -> millisecond offset
 translations.json             # 8 target languages with word alignments

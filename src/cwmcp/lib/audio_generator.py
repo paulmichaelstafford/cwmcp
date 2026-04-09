@@ -1,8 +1,7 @@
 # src/cwmcp/lib/audio_generator.py
-"""Generate audio from chapter.md via ElevenLabs TTS.
+"""Generate audio from chapter.md via cwtts service.
 
 Caches audio.mp3, marks.json, marks_in_milliseconds.json next to chapter.md.
-Requires: elevenlabs Python SDK.
 """
 import base64
 import json
@@ -11,10 +10,10 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.request
 import uuid
 
 
-DEFAULT_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"  # George - British storyteller
 PAUSE_BETWEEN_PARAGRAPHS = 800
 PAUSE_WITHIN_PARAGRAPH = 300
 MAX_WORDS = 250
@@ -59,66 +58,42 @@ def parse_chapter(filepath: str) -> tuple[str, list[dict]]:
     return title, segments
 
 
-def _get_client(api_key: str):
-    from elevenlabs.client import ElevenLabs
-
-    return ElevenLabs(api_key=api_key)
-
-
-def generate_audio_segment(client, text: str, voice_id: str) -> tuple[bytes, object]:
-    """Generate TTS for a single text segment. Returns (audio_bytes, alignment)."""
-    response = client.text_to_speech.convert_with_timestamps(
-        voice_id=voice_id,
-        text=text,
-        model_id="eleven_multilingual_v2",
-        output_format="mp3_44100_128",
-        voice_settings={"stability": 0.5, "similarity_boost": 0.75, "style": 0.0, "use_speaker_boost": True},
+def generate_via_cwtts(cwtts_url: str, text: str, language: str) -> tuple[bytes, list[dict]]:
+    """Generate TTS via cwtts service. Returns (audio_bytes, sentences)."""
+    payload = json.dumps({"text": text, "language": language}).encode()
+    req = urllib.request.Request(
+        f"{cwtts_url}/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
-    audio_bytes = base64.b64decode(response.audio_base_64)
-    return audio_bytes, response.alignment
+    with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read())
+    audio_bytes = base64.b64decode(data["audio_base64"])
+    return audio_bytes, data["sentences"]
 
 
-def build_marks_from_segments(
-    segments: list[dict], segment_alignments: list, segment_offsets_ms: list[int]
+def build_marks_from_cwtts(
+    segments: list[dict], segment_sentences: list[list[dict]], segment_offsets_ms: list[int]
 ) -> tuple[list[dict], dict]:
-    """Build marks and marks_in_milliseconds from segment data."""
+    """Build marks and marks_in_milliseconds from cwtts sentence timings."""
     marks = []
     marks_in_ms = {}
 
     for i, seg in enumerate(segments):
-        alignment = segment_alignments[i]
         offset_ms = segment_offsets_ms[i]
-        text = seg["text"]
         paragraph_idx = seg["paragraph_idx"]
+        sentences = segment_sentences[i]
 
-        sentences = []
-        current = []
-        for ch in text:
-            current.append(ch)
-            if ch in ".!?\u3002\uff01\uff1f":
-                sentences.append("".join(current).strip())
-                current = []
-        if current:
-            leftover = "".join(current).strip()
-            if leftover:
-                sentences.append(leftover)
-
-        starts = alignment.character_start_times_seconds
-
-        char_offset = 0
-        for sentence_idx, sentence_text in enumerate(sentences):
-            sentence_start_char = text.index(sentence_text, char_offset)
-            sentence_start_ms = int(starts[sentence_start_char] * 1000) + offset_ms
-
+        for sentence_idx, sentence in enumerate(sentences):
             mark_id = str(uuid.uuid4())
             marks.append({
                 "id": mark_id,
                 "sentence": sentence_idx,
                 "paragraph": paragraph_idx,
-                "text": sentence_text,
+                "text": sentence["text"],
             })
-            marks_in_ms[mark_id] = sentence_start_ms
-            char_offset = sentence_start_char + len(sentence_text)
+            marks_in_ms[mark_id] = sentence["start_ms"] + offset_ms
 
     return marks, marks_in_ms
 
@@ -179,11 +154,11 @@ def merge_audio_with_ffmpeg(audio_segments: list[bytes], pause_durations: list[i
 
 
 def generate_chapter_audio(
-    api_key: str,
+    cwtts_url: str,
     chapter_md_path: str,
-    voice_id: str = DEFAULT_VOICE_ID,
+    language: str,
 ) -> dict:
-    """Generate audio for a chapter.md file.
+    """Generate audio for a chapter.md file via cwtts.
 
     Caches audio.mp3, marks.json, marks_in_milliseconds.json next to chapter.md.
     Skips if audio already exists.
@@ -207,20 +182,18 @@ def generate_chapter_audio(
             "message": f"Chapter has {total_words} words, max is {MAX_WORDS}. Trim before generating.",
         }
 
-    client = _get_client(api_key)
-
     audio_segments = []
-    segment_alignments = []
+    segment_sentences = []
     for seg in segments:
-        audio_bytes, alignment = generate_audio_segment(client, seg["text"], voice_id)
+        audio_bytes, sentences = generate_via_cwtts(cwtts_url, seg["text"], language)
         audio_segments.append(audio_bytes)
-        segment_alignments.append(alignment)
+        segment_sentences.append(sentences)
 
     pause_durations = []
     segment_offsets_ms = [0]
     cumulative_ms = 0
     for i in range(len(segments)):
-        seg_duration_ms = int(segment_alignments[i].character_end_times_seconds[-1] * 1000)
+        seg_duration_ms = segment_sentences[i][-1]["end_ms"] if segment_sentences[i] else 0
         cumulative_ms += seg_duration_ms
         if i < len(segments) - 1:
             pause_ms = (
@@ -233,7 +206,7 @@ def generate_chapter_audio(
             segment_offsets_ms.append(cumulative_ms)
 
     merged_audio = merge_audio_with_ffmpeg(audio_segments, pause_durations)
-    marks, marks_in_ms = build_marks_from_segments(segments, segment_alignments, segment_offsets_ms)
+    marks, marks_in_ms = build_marks_from_cwtts(segments, segment_sentences, segment_offsets_ms)
 
     with open(audio_cache, "wb") as f:
         f.write(merged_audio)

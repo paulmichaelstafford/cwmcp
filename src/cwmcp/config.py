@@ -4,7 +4,7 @@ from pathlib import Path
 
 CWBE_URL = "https://be.collapsingwave.com"
 DEFAULT_CONFIG_PATH = str(Path.home() / ".cwmcp" / "config.properties")
-REQUIRED_FIELDS = ["cwbe_user", "cwbe_password", "content_path", "elevenlabs_api_key"]
+REQUIRED_FIELDS = ["cwbe_user", "cwbe_password", "content_path"]
 
 
 class ConfigError(Exception):
@@ -16,8 +16,9 @@ class Config:
     cwbe_user: str
     cwbe_password: str
     content_path: str
-    elevenlabs_api_key: str
+    elevenlabs_api_key: str = ""
     cwbe_url: str = CWBE_URL
+    cwtts_url: str = "http://localhost:8100"
 
 
 def load_config(path: str = DEFAULT_CONFIG_PATH) -> Config:
@@ -42,5 +43,6 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> Config:
         cwbe_user=props["cwbe_user"],
         cwbe_password=props["cwbe_password"],
         content_path=props["content_path"],
-        elevenlabs_api_key=props["elevenlabs_api_key"],
+        elevenlabs_api_key=props.get("elevenlabs_api_key", ""),
+        cwtts_url=props.get("cwtts_url", "http://localhost:8100"),
     )

@@ -9,14 +9,14 @@ def test_load_config_reads_properties(tmp_path):
     config_file.write_text(
         "cwbe_user=test@example.com\n"
         "cwbe_password=secret123\n"
-        "elevenlabs_api_key=sk_test123\n"
         "content_path=/tmp/audio\n"
+        "cwtts_url=http://localhost:8100\n"
     )
     config = load_config(str(config_file))
     assert config.cwbe_user == "test@example.com"
     assert config.cwbe_password == "secret123"
-    assert config.elevenlabs_api_key == "sk_test123"
     assert config.content_path == "/tmp/audio"
+    assert config.cwtts_url == "http://localhost:8100"
 
 def test_load_config_missing_file():
     with pytest.raises(ConfigError, match="not found"):
@@ -35,8 +35,18 @@ def test_load_config_ignores_comments_and_blank_lines(tmp_path):
         "\n"
         "cwbe_user=test@example.com\n"
         "cwbe_password=secret123\n"
-        "elevenlabs_api_key=sk_test123\n"
         "content_path=/tmp/audio\n"
     )
     config = load_config(str(config_file))
     assert config.cwbe_user == "test@example.com"
+
+def test_load_config_defaults(tmp_path):
+    config_file = tmp_path / "config.properties"
+    config_file.write_text(
+        "cwbe_user=test@example.com\n"
+        "cwbe_password=secret123\n"
+        "content_path=/tmp/audio\n"
+    )
+    config = load_config(str(config_file))
+    assert config.cwtts_url == "http://localhost:8100"
+    assert config.elevenlabs_api_key == ""
