@@ -10,6 +10,20 @@ class CwbeClient:
         self.auth = HTTPBasicAuth(user, password)
         self.base_url = CWBE_URL
 
+    def generate_tts(self, text: str, language: str, voice: str | None = None) -> dict:
+        """Call /api/service/tts. Returns {audio_base64, format, sample_rate, bitrate, sentences}."""
+        payload = {"text": text, "language": language}
+        if voice:
+            payload["voice"] = voice
+        resp = requests.post(
+            f"{self.base_url}/api/service/tts",
+            auth=self.auth,
+            json=payload,
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def translate_texts(self, source_lang: str, texts: list[str], batch_size: int = 5) -> dict[str, list[str]]:
         """Call /api/service/translate-texts. Returns {lang: [translated_text, ...]}."""
         all_results = None

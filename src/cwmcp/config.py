@@ -19,6 +19,8 @@ class Config:
     elevenlabs_api_key: str = ""
     cwbe_url: str = CWBE_URL
     cwtts_url: str = "http://localhost:8100"
+    mistral_api_key: str = ""
+    fish_audio_api_key: str = ""
 
 
 def load_config(path: str = DEFAULT_CONFIG_PATH) -> Config:
@@ -45,4 +47,6 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> Config:
         content_path=props["content_path"],
         elevenlabs_api_key=props.get("elevenlabs_api_key", ""),
         cwtts_url=props.get("cwtts_url", "http://localhost:8100"),
+        mistral_api_key=props.get("mistral_api_key", ""),
+        fish_audio_api_key=props.get("fish_audio_api_key", ""),
     )

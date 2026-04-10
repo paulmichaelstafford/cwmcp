@@ -164,8 +164,10 @@ def generate_audio(book: str, chapter_number: int, lang: str, level: str) -> str
         level: "B1" or "B2"
     """
     config = get_config()
+    client = get_client()
     result = generate_single(
         config.cwtts_url, config.content_path, book, chapter_number, lang, level,
+        cwbe_client=client,
     )
     return json.dumps(result, indent=2)
 
@@ -179,8 +181,10 @@ def generate_audio_batch(book: str, chapter_number: int) -> str:
         chapter_number: Chapter number (e.g. 7)
     """
     config = get_config()
+    client = get_client()
     results = generate_batch(
         config.cwtts_url, config.content_path, book, chapter_number,
+        cwbe_client=client,
     )
     return json.dumps(results, indent=2)
 

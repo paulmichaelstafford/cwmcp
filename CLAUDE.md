@@ -40,6 +40,10 @@ PYTHONPATH=src python3 -m pytest tests/ -v
 
 When asked to do "chapter N" for a book, this is the full workflow.
 
+### Processing order
+
+Process each lang/level combo **end-to-end** before starting the next one: audio → translations → alignments → upload. Do NOT batch all audio first then all translations — finish and upload each combo completely before moving on.
+
 ### Step-by-step (per chapter)
 
 0. **Get publication info** — use `list_publications` to find the publication ID, then `get_publication_readme` to read the style guide, voice config, topic backlog, and chapter structure rules. If the book has a glossary in its readme, use the localized proper noun forms.
@@ -105,17 +109,32 @@ Chapter text must be alignment-friendly **before** generating audio. Poorly stru
 - **Narrator only** — all text uses a single narrator voice. No character voices.
 - **No sound effects** — do not use `[sfx:...]` tags. Clean narrator audio only.
 
+## TTS Voice Config
+
+| Language | Engine | Voice ID | Voice Name |
+|----------|--------|----------|------------|
+| EN | Kokoro (local) | af_heart | Heart (female, grade A) |
+| FR | Voxtral (Mistral API) | e0580ce5-e63c-4cbe-88c8-a983b80c5f1f | Marie Curious |
+| ES | Fish Audio | f53102becdf94a51af6d64010bc658f2 | Jesus Narrador |
+| DE | Fish Audio | a42859a3e3674c58b73be590f62152eb | Markanter Erzähler |
+| IT | Fish Audio | 4d45631184584ce1b2eda4e06ae14e5f | Narratore de Brainrot Italiano |
+| PT | Fish Audio | 4d72497e3ceb4c75a7c5563900975afd | Narração Contos de Terror |
+| ZH | Fish Audio | e0cbb35d7cc2420c87f2ea6ad623b61a | Mature Male Story |
+| JA | Fish Audio | 0221478a85aa4703a410ccb405afb872 | Late Night Storyteller |
+| KO | Fish Audio | 4194b66c6ec24dc3be72a0cbd2547b61 | Kore Storytelling |
+
+Voice IDs are configured in `cwbe/docker/cwtts/app/config.py`. EN is free (Kokoro, local). Other languages use cloud APIs (Mistral for FR, Fish Audio for the rest).
+
 ## Translation & Alignment Rules
 
-- **Always use manual translations.** Claude provides translations + word-pair alignments. This is the only approach that reliably passes cwbe validation. Reasons:
-  - Correct domain terminology and proper noun handling vs Azure's generic translations
-  - Consistent literary register — Azure mixes formal/polite with plain form in JA/KO
-  - Phrase-level alignments with ~93% target coverage for CJK vs awesome-align's ~47%
-  - cwbe rejects uploads where any mark has <40% CJK coverage or <70% European coverage
-- **Auto builder is a fallback only** — use it to get Azure translations as a reference if stuck, but never use its output directly for upload. The alignments it produces will be rejected by cwbe for CJK targets.
+- **Two-track alignment strategy:**
+  - **European (EN, FR, ES, DE, IT, PT):** Use awesome-align via cwbe's `/api/service/align` endpoint. It gets 95-100% coverage for European pairs — no need for Claude to generate alignments. Translate the text, then call `align_text` to get alignments automatically.
+  - **CJK (ZH, JA, KO):** Use manual Claude-generated translations + word-pair alignments. Awesome-align fails CJK (~26-39% coverage). Claude provides phrase-level alignments with ~93% target coverage.
+- **Translation quality:** Claude provides all translations (European and CJK) for correct domain terminology, proper nouns, and consistent literary register. Only the alignment step differs.
 - Format: `TokenAlignment { sourceStart, sourceEnd, targetStart, targetEnd }` — all inclusive character offsets.
 - Target languages: EN, FR, ES, DE, IT, PT, ZH, JA, KO (8 targets per source, excluding source language).
 - **Alignment coverage required** — cwbe validates that alphanumeric characters (`isLetterOrDigit()`) in both source and target text are covered by alignment ranges. Thresholds: **70% for European-European pairs**, **40% for any pair involving CJK**.
+- **Max 3 concurrent requests** to cwbe/awesome-align. The server is on limited hardware — don't bombard it.
 
 ## Available MCP Tools
 

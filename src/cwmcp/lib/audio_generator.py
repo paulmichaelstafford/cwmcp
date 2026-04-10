@@ -59,7 +59,7 @@ def parse_chapter(filepath: str) -> tuple[str, list[dict]]:
 
 
 def generate_via_cwtts(cwtts_url: str, text: str, language: str) -> tuple[bytes, list[dict]]:
-    """Generate TTS via cwtts service. Returns (audio_bytes, sentences)."""
+    """Generate TTS via cwtts service directly. Returns (audio_bytes, sentences)."""
     payload = json.dumps({"text": text, "language": language}).encode()
     req = urllib.request.Request(
         f"{cwtts_url}/generate",
@@ -69,6 +69,13 @@ def generate_via_cwtts(cwtts_url: str, text: str, language: str) -> tuple[bytes,
     )
     with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read())
+    audio_bytes = base64.b64decode(data["audio_base64"])
+    return audio_bytes, data["sentences"]
+
+
+def generate_via_cwbe(client, text: str, language: str) -> tuple[bytes, list[dict]]:
+    """Generate TTS via cwbe /api/service/tts endpoint. Returns (audio_bytes, sentences)."""
+    data = client.generate_tts(text=text, language=language)
     audio_bytes = base64.b64decode(data["audio_base64"])
     return audio_bytes, data["sentences"]
 
@@ -157,6 +164,7 @@ def generate_chapter_audio(
     cwtts_url: str,
     chapter_md_path: str,
     language: str,
+    cwbe_client=None,
 ) -> dict:
     """Generate audio for a chapter.md file via cwtts.
 
@@ -185,7 +193,10 @@ def generate_chapter_audio(
     audio_segments = []
     segment_sentences = []
     for seg in segments:
-        audio_bytes, sentences = generate_via_cwtts(cwtts_url, seg["text"], language)
+        if cwbe_client:
+            audio_bytes, sentences = generate_via_cwbe(cwbe_client, seg["text"], language)
+        else:
+            audio_bytes, sentences = generate_via_cwtts(cwtts_url, seg["text"], language)
         audio_segments.append(audio_bytes)
         segment_sentences.append(sentences)
 
