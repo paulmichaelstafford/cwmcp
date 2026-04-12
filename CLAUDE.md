@@ -1,5 +1,7 @@
 # CLAUDE.md — cwmcp
 
+**This file is the single source of truth.** Do not use memory files or save memories. All guidance, rules, and workflow instructions live here. If something is not in this file, it is not a rule.
+
 ## What This Is
 
 MCP server for the CollapsingWave audiobook pipeline. Exposes tools for checking chapter status, generating audio, building translations, testing alignments, and uploading chapters.
@@ -42,37 +44,49 @@ When asked to do "chapter N" for a book, this is the full workflow.
 
 ### Processing order
 
-Process each lang/level combo **end-to-end** before starting the next one: audio → translations → alignments → upload. Do NOT batch all audio first then all translations — finish and upload each combo completely before moving on.
+Process each lang/level combo **end-to-end** before starting the next one: audio → translations → upload. Do NOT batch all audio first then all translations — finish and upload each combo completely before moving on. Use up to 4 parallel agents, each processing one combo end-to-end.
 
 ### Step-by-step (per chapter)
 
-0. **Get publication info** — use `list_publications` to find the publication ID, then `get_publication_readme` to read the style guide, voice config, topic backlog, and chapter structure rules. If the book has a glossary in its readme, use the localized proper noun forms.
+0. **Get publication info** — use `list_publications` to find the publication ID, then `get_publication_readme` to read the style guide, voice config, topic backlog, and chapter structure rules. If the book has a glossary in its readme, use the localized proper noun forms. The upload tool reads the publication ID from a local `README.md` in the book directory (looks for `**Publication ID (cwbe):** <uuid>`). Create this file if missing, using the ID from `list_publications`.
 
 1. **Check what's done** — use `list_uploaded_chapters` to see which chapters are already uploaded. Determine the next chapter number.
 
-2. **Write chapter.md** for each lang/level combo (18 total: 9 langs x 2 levels)
+2. **Prepare abridged source** (first time only, skip if `text/abridged.txt` already exists)
+   - Scan `text/original.txt` and plan how the full narrative maps to ~100 chapters at ~200 words each.
+   - Write `text/abridged.txt` — a condensed version of the narrative that fits the 100-chapter budget. Compress descriptive passages, cut repetitive sections, merge minor scenes. Preserve all key plot beats, character arcs, and pivotal moments.
+   - `original.txt` is never modified — it's the canonical reference. `abridged.txt` is the working source that chapters are written from.
+   - When rewriting, follow the CJK-Friendly Writing rules (see below) — simple structure, concrete words, proper nouns, no idioms. This makes downstream alignment trivial.
+   - For shorter books where the original already fits within 100 chapters at 200 words, `abridged.txt` may be close to the original with only minor restructuring.
+
+3. **Write chapter.md** for each lang/level combo (18 total: 9 langs x 2 levels)
    - Path: `{content_path}/{onetime|continuous}/{book}/chapter-NNNN-slug/{lang}/{level}/chapter.md`
    - Front matter: `title: Chapter Title`
-   - Body: `[narrator] Text here.` — all text is narrated (no character voices)
+   - Body: `[narrator] Text here.` — all text uses the `[narrator]` tag. Direct quotes and dialogue within narrator lines are fine.
    - B1 = simple, B2 = intermediate
    - **Max 200 words per chapter** (both levels). Create more chapters if needed rather than exceeding the limit.
+   - **Max 100 chapters per book.** Write chapters from `text/abridged.txt`, not from `original.txt`.
 
-3. **Generate audio** — use `generate_audio` or `generate_audio_batch` tools
-   - Calls cwtts service (Kokoro for EN, Voxtral/Mistral API for FR, Fish Audio API for ES/DE/IT/PT/ZH/JA/KO)
-   - Caches `audio.mp3` + `marks.json` + `marks_in_milliseconds.json` next to chapter.md
-   - Skips if audio.mp3 already exists (safe to re-run)
-   - EN is free (Kokoro, local). Other languages use cloud APIs (cheap — cents per chapter).
+4. **Generate audio**
+   - **EN only:** use `generate_audio` or `generate_audio_batch` MCP tools. These go through cwbe which runs Kokoro locally.
+   - **All other languages:** call the TTS APIs directly. cwbe only handles EN.
+     - **FR:** Mistral Voxtral API (`mistral_api_key` from config)
+     - **ES, DE, IT, PT, ZH, JA, KO:** Fish Audio API (`fish_audio_api_key` from config)
+     - See TTS Voice Config table for voice IDs.
+   - Cache `audio.mp3` + `marks.json` + `marks_in_milliseconds.json` next to chapter.md in the same format as the MCP tool produces.
+   - Skips if audio.mp3 already exists (safe to re-run).
    - Never delete audio.mp3, marks.json, or marks_in_milliseconds.json unless they have been successfully uploaded.
+   - **After generating the first combo, check mark count.** If >15, rewrite chapter text before continuing.
 
-4. **Build translations** from cached marks
-   - **Dispatch one agent per lang/level combo** — all 16 non-EN variants can run in parallel
-   - Each agent writes a manual translation script (e.g. `scripts/build_el7_fr_b1.py`) and runs it
-   - Uses `build_chapter_translations.py` with `build_and_save()` for European alignment via cwbe + manual CJK word pairs
-   - For failing marks, provide manual overrides with alignment data
-   - **Must happen after step 3** because translations must match marks.json 1:1
-   - **Every mark must have non-empty `tokenAlignments` for all 8 target languages** — cwbe rejects uploads with any empty alignments. The local coverage check may pass but cwbe will reject.
+5. **Build translations** — use `build_translations` MCP tool
+   - Translates all marks to 8 target languages and aligns via awesome-align (cwbe `/api/service/align`)
+   - European pairs pass automatically. **CJK pairs (ZH, JA, KO) return empty alignments** — Claude must build these itself (see CJK Alignment below).
+   - After `build_translations` returns, check for any CJK target languages with empty `tokenAlignments`. For each, provide overrides and re-run `build_translations` with the `overrides` parameter.
+   - Override format: `{"mark_idx": {"lang": {"text": "...", "tokenAlignments": [...]}}}`
+   - **Must happen after step 4** because translations must match marks.json 1:1
+   - **Every mark must have non-empty `tokenAlignments` for all 8 target languages** — cwbe rejects uploads with any empty alignments
 
-5. **Upload** — use `upload_chapter` or `upload_batch` tools
+6. **Upload** — use `upload_chapter` or `upload_batch` tools
    - Sends cached audio + marks + translations to cwbe
    - Max 3 concurrent uploads (cwbe is on limited hardware)
 
@@ -96,7 +110,19 @@ Chapter text must be alignment-friendly **before** generating audio. Poorly stru
 
 - **Every sentence must be at least 5 words.** No fragments ("Gray.", "Silent.", "DELETE."). Merge fragments into full sentences.
 - **Aim for 10-15 marks per chapter.** Each `[narrator]` line may split into multiple marks at sentence boundaries. Short sentences = more marks = more alignment work. Chapter with 35 marks takes 3-4x longer than one with 12 marks.
-- **Longer sentences help CJK**: the 40% coverage threshold is easier to hit with more characters per mark. A 3-word sentence needs every word mapped; a 15-word sentence can tolerate some gaps.
+- **Short sentences are hard to align.** A 3-word sentence like `"Of course."` needs every single word mapped to pass coverage — there is zero room for error. A 15-word sentence can tolerate gaps because missing a few words still clears the threshold. Short sentences are the #1 cause of alignment failures, especially for CJK where the 40% threshold is tight on small text. Combine short exchanges into longer lines: `"Of course, let me weigh it first," the clerk says, putting the package on the scale.` Direct quotes are fine — just keep each sentence substantial (8+ words).
+- **Validate mark count after first audio.** After generating audio for the first combo (e.g. EN/B1), check marks.json. If mark count exceeds 15, stop and rewrite the chapter text before generating more audio.
+
+### CJK-Friendly Writing (applies to abridged text and all chapter text)
+
+These rules make CJK alignment fast and reliable. Follow them when writing `text/abridged.txt` and all chapter.md files:
+
+- **Simple sentence structure.** SVO order, no nested clauses. CJK languages rearrange heavily — complex English structures produce translations where words scatter and are hard to pair.
+- **Concrete nouns and verbs.** "sword", "goddess", "whispered" map 1:1 to CJK equivalents. Avoid abstract phrasing like "the satisfaction of having done so" — it becomes an unparseable blob in translation.
+- **Use proper nouns liberally.** Every "Achilles"→"アキレス" is free alignment coverage. The more names in a sentence, the easier alignment gets.
+- **Avoid idioms and phrasal verbs.** "hold back" must map as a unit to a CJK expression. "restrain" is cleaner — it maps 1:1 to a single verb.
+- **Minimize function words.** "right where he stood" is 5 English words that map to 3 Japanese characters. Dense source text with small words (the, a, of, to, by) drags down source coverage because they have no CJK counterpart to pair with.
+- **Write like a subtitle.** Direct, concrete, name-heavy prose aligns easily. Literary flourishes are the enemy of CJK alignment.
 
 ## Localization Rules
 
@@ -106,7 +132,7 @@ Chapter text must be alignment-friendly **before** generating audio. Poorly stru
 
 ## Audio Production Style
 
-- **Narrator only** — all text uses a single narrator voice. No character voices.
+- **Single `[narrator]` tag** — all text uses the `[narrator]` tag. Direct quotes and dialogue are fine within narrator lines. No separate character voice tags.
 - **No sound effects** — do not use `[sfx:...]` tags. Clean narrator audio only.
 
 ## TTS Voice Config
@@ -123,18 +149,67 @@ Chapter text must be alignment-friendly **before** generating audio. Poorly stru
 | JA | Fish Audio | 0221478a85aa4703a410ccb405afb872 | Late Night Storyteller |
 | KO | Fish Audio | 4194b66c6ec24dc3be72a0cbd2547b61 | Kore Storytelling |
 
-Voice IDs are configured in `cwbe/docker/cwtts/app/config.py`. EN is free (Kokoro, local). Other languages use cloud APIs (Mistral for FR, Fish Audio for the rest).
+EN uses Kokoro via cwbe (free, local). All other languages call external APIs directly — Mistral for FR, Fish Audio for the rest. cwbe does not handle non-EN TTS. API keys are in `~/.cwmcp/config.properties` (`mistral_api_key`, `fish_audio_api_key`).
 
 ## Translation & Alignment Rules
 
-- **Two-track alignment strategy:**
-  - **European (EN, FR, ES, DE, IT, PT):** Use awesome-align via cwbe's `/api/service/align` endpoint. It gets 95-100% coverage for European pairs — no need for Claude to generate alignments. Translate the text, then call `align_text` to get alignments automatically.
-  - **CJK (ZH, JA, KO):** Use manual Claude-generated translations + word-pair alignments. Awesome-align fails CJK (~26-39% coverage). Claude provides phrase-level alignments with ~93% target coverage.
-- **Translation quality:** Claude provides all translations (European and CJK) for correct domain terminology, proper nouns, and consistent literary register. Only the alignment step differs.
-- Format: `TokenAlignment { sourceStart, sourceEnd, targetStart, targetEnd }` — all inclusive character offsets.
+- The `build_translations` MCP tool handles translation and alignment. It translates each mark to 8 target languages and computes word-level alignments.
+- **European-European pairs (EN, FR, ES, DE, IT, PT ↔ EN, FR, ES, DE, IT, PT):** Use awesome-align via cwbe `/api/service/align`. Gets 95-100% coverage — usually passes without manual work.
+- **Any pair involving CJK (ZH, JA, KO):** cwbe returns **empty `tokenAlignments`** for these pairs. Claude must always build CJK alignments itself using the word-pair approach (see below).
+- Format: `TokenAlignment { sourceStart, sourceEnd, targetStart, targetEnd }` — all **inclusive** character offsets (0-based).
 - Target languages: EN, FR, ES, DE, IT, PT, ZH, JA, KO (8 targets per source, excluding source language).
-- **Alignment coverage required** — cwbe validates that alphanumeric characters (`isLetterOrDigit()`) in both source and target text are covered by alignment ranges. Thresholds: **70% for European-European pairs**, **40% for any pair involving CJK**.
-- **Max 3 concurrent requests** to cwbe/awesome-align. The server is on limited hardware — don't bombard it.
+- **Coverage thresholds** — cwbe validates that alphanumeric characters (`isLetterOrDigit()`) in both source and target text are covered by alignment ranges. Thresholds: **70% for European-European pairs**, **40% for any pair involving CJK**.
+- **Max 3 concurrent requests** to cwbe/awesome-align. The server is on limited hardware.
+
+## CJK Alignment (ZH, JA, KO)
+
+cwbe does not produce alignments for CJK languages. Claude must build them directly using word pairs and the `align()` helper in `src/cwmcp/lib/translations_helper.py`.
+
+### How it works
+
+1. `build_translations` returns translations for all 8 target languages. European pairs have `tokenAlignments` populated. CJK pairs have **empty** `tokenAlignments`.
+2. For each mark × CJK target language with empty alignments, Claude provides **word pairs** — a list of `(source_substring, target_substring)` tuples mapping phrases between the source text and the CJK translation.
+3. The `align()` helper computes character offsets from these pairs automatically. No manual offset math needed.
+4. Re-run `build_translations` with the `overrides` parameter containing the computed alignments.
+
+### Word pair guidelines
+
+- Map content words and phrases: nouns, verbs, adjectives, names, key expressions.
+- Each pair must be a **literal substring** of the source and target texts (case-sensitive, exact match).
+- Aim for ~40-60% coverage of alphanumeric characters on both sides. More pairs = higher coverage, but diminishing returns past 60%.
+- Proper nouns are easy wins (e.g., `("Agamemnon", "アガメムノン")`).
+- Map multi-word phrases when the target is a single unit (e.g., `("reached for", "手を伸ばし")`).
+- Skip function words, particles, and grammatical markers that don't map cleanly.
+
+### Example
+
+```python
+from cwmcp.lib.translations_helper import align, check_coverage
+
+source = "He reached for his sword and nearly struck Agamemnon down."
+target = "彼は剣に手を伸ばし、アガメムノンを倒しそうになった。"
+
+pairs = [
+    ("He", "彼は"),
+    ("sword", "剣"),
+    ("reached for", "手を伸ばし"),
+    ("Agamemnon", "アガメムノン"),
+    ("struck", "倒し"),
+]
+
+alignments = align(source, target, pairs)
+src_cov = check_coverage(source, alignments, side="source")
+tgt_cov = check_coverage(target, alignments, side="target")
+# src_cov=55%, tgt_cov=52% — passes 40% threshold
+```
+
+### Integration with build_translations
+
+After `build_translations` returns with empty CJK alignments:
+1. Read the translations.json to get each mark's source text and CJK translations
+2. For each mark × CJK language, generate word pairs and compute alignments using `align()`
+3. Package as overrides: `{mark_idx: {lang: {"text": translated_text, "tokenAlignments": [...]}}}`
+4. Re-run `build_translations` with the `overrides` parameter to merge them in
 
 ## Available MCP Tools
 

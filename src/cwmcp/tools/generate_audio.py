@@ -32,6 +32,8 @@ def generate_single(
     lang: str,
     level: str,
     cwbe_client=None,
+    mistral_api_key: str = "",
+    fish_audio_api_key: str = "",
 ) -> dict:
     """Generate audio for a single lang/level combo."""
     chapter_base = find_chapter_dir(content_path, book, chapter_number)
@@ -47,6 +49,8 @@ def generate_single(
         chapter_md_path=chapter_md,
         language=lang.upper(),
         cwbe_client=cwbe_client,
+        mistral_api_key=mistral_api_key,
+        fish_audio_api_key=fish_audio_api_key,
     )
 
 
@@ -56,6 +60,8 @@ def generate_batch(
     book: str,
     chapter_number: int,
     cwbe_client=None,
+    mistral_api_key: str = "",
+    fish_audio_api_key: str = "",
 ) -> list[dict]:
     """Generate audio for all lang/level combos that have chapter.md but no audio.mp3."""
     chapter_base = find_chapter_dir(content_path, book, chapter_number)
@@ -78,6 +84,8 @@ def generate_batch(
                 chapter_md_path=chapter_md,
                 language=lang.upper(),
                 cwbe_client=cwbe_client,
+                mistral_api_key=mistral_api_key,
+                fish_audio_api_key=fish_audio_api_key,
             )
             result["lang"] = lang.upper()
             result["level"] = level.upper()

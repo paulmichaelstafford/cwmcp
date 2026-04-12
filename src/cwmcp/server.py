@@ -1,4 +1,5 @@
 # src/cwmcp/server.py
+import asyncio
 import json
 from typing import Any
 from mcp.server.fastmcp import FastMCP
@@ -74,7 +75,7 @@ def check_coverage(translations_path: str) -> str:
 
 
 @mcp.tool()
-def align_text(source_lang: str, source_text: str, target_lang: str, target_text: str) -> str:
+async def align_text(source_lang: str, source_text: str, target_lang: str, target_text: str) -> str:
     """Call awesome-align on a source/target text pair.
     Returns alignments with coverage percentages and pass/fail status.
     Useful for testing individual translations before committing.
@@ -86,12 +87,14 @@ def align_text(source_lang: str, source_text: str, target_lang: str, target_text
         target_text: Target translation text
     """
     client = get_client()
-    result = align_text_pair(client, source_lang, source_text, target_lang, target_text)
+    result = await asyncio.to_thread(
+        align_text_pair, client, source_lang, source_text, target_lang, target_text,
+    )
     return json.dumps(result, indent=2)
 
 
 @mcp.tool()
-def build_translations(book: str, chapter_number: int, level: str, overrides: str | dict | None = None, target_lang: str | None = None) -> str:
+async def build_translations(book: str, chapter_number: int, level: str, overrides: str | dict | None = None, target_lang: str | None = None, source_lang: str = "EN") -> str:
     """Build translations.json for a chapter using Azure Translate + awesome-align.
     Optionally accepts manual overrides for marks that fail coverage.
 
@@ -101,6 +104,7 @@ def build_translations(book: str, chapter_number: int, level: str, overrides: st
         level: "b1" or "b2"
         overrides: Optional JSON string with manual overrides: {"mark_idx": {"lang": {"text": "...", "tokenAlignments": [...]}}}
         target_lang: Optional single target language (e.g. "DE"). If set, only processes that language and merges into existing translations.json.
+        source_lang: Source language code (default "EN"). Set to match the chapter's language (e.g. "DE" for German chapters).
     """
     config = get_config()
     client = get_client()
@@ -110,15 +114,16 @@ def build_translations(book: str, chapter_number: int, level: str, overrides: st
         override_data = json.loads(overrides)
     else:
         override_data = overrides
-    result = build_chapter_translations(
+    result = await asyncio.to_thread(
+        build_chapter_translations,
         client, config.content_path, book, chapter_number, level, override_data,
-        target_lang=target_lang,
+        target_lang=target_lang, source_lang=source_lang,
     )
     return json.dumps(result, indent=2)
 
 
 @mcp.tool()
-def upload_chapter(book: str, chapter_number: int, lang: str, level: str) -> str:
+async def upload_chapter(book: str, chapter_number: int, lang: str, level: str) -> str:
     """Upload a single lang/level combo to cwbe.
     Requires audio.mp3, marks.json, marks_in_milliseconds.json, and translations.json.
 
@@ -130,12 +135,14 @@ def upload_chapter(book: str, chapter_number: int, lang: str, level: str) -> str
     """
     config = get_config()
     client = get_client()
-    result = upload_single(client, config.content_path, book, chapter_number, lang, level)
+    result = await asyncio.to_thread(
+        upload_single, client, config.content_path, book, chapter_number, lang, level,
+    )
     return json.dumps(result, indent=2)
 
 
 @mcp.tool()
-def upload_batch(book: str, chapter_number: int, workers: int = 3) -> str:
+async def upload_batch(book: str, chapter_number: int, workers: int = 3) -> str:
     """Upload all ready lang/level combos for a chapter.
     Scans all 18 combos, uploads those with all required files.
 
@@ -147,13 +154,17 @@ def upload_batch(book: str, chapter_number: int, workers: int = 3) -> str:
     config = get_config()
     client = get_client()
     workers = min(workers, 3)
-    result = upload_chapter_batch(client, config.content_path, book, chapter_number, workers)
+    result = await asyncio.to_thread(
+        upload_chapter_batch, client, config.content_path, book, chapter_number, workers,
+    )
     return json.dumps(result, indent=2)
 
 
 @mcp.tool()
-def generate_audio(book: str, chapter_number: int, lang: str, level: str) -> str:
-    """Generate audio for a single lang/level combo using cwtts TTS.
+async def generate_audio(book: str, chapter_number: int, lang: str, level: str) -> str:
+    """Generate audio for a single lang/level combo.
+    Routes to the appropriate TTS engine based on language:
+    EN uses Kokoro (local via cwbe), FR uses Mistral Voxtral, others use Fish Audio.
     Caches audio.mp3, marks.json, marks_in_milliseconds.json next to chapter.md.
     Skips if audio already exists.
 
@@ -165,16 +176,21 @@ def generate_audio(book: str, chapter_number: int, lang: str, level: str) -> str
     """
     config = get_config()
     client = get_client()
-    result = generate_single(
+    result = await asyncio.to_thread(
+        generate_single,
         config.cwtts_url, config.content_path, book, chapter_number, lang, level,
         cwbe_client=client,
+        mistral_api_key=config.mistral_api_key,
+        fish_audio_api_key=config.fish_audio_api_key,
     )
     return json.dumps(result, indent=2)
 
 
 @mcp.tool()
-def generate_audio_batch(book: str, chapter_number: int) -> str:
+async def generate_audio_batch(book: str, chapter_number: int) -> str:
     """Generate audio for all lang/level combos that have chapter.md but no audio.mp3.
+    Routes to the appropriate TTS engine based on language:
+    EN uses Kokoro (local via cwbe), FR uses Mistral Voxtral, others use Fish Audio.
 
     Args:
         book: Book directory name (e.g. "everyday-life")
@@ -182,9 +198,12 @@ def generate_audio_batch(book: str, chapter_number: int) -> str:
     """
     config = get_config()
     client = get_client()
-    results = generate_batch(
+    results = await asyncio.to_thread(
+        generate_batch,
         config.cwtts_url, config.content_path, book, chapter_number,
         cwbe_client=client,
+        mistral_api_key=config.mistral_api_key,
+        fish_audio_api_key=config.fish_audio_api_key,
     )
     return json.dumps(results, indent=2)
 

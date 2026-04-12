@@ -11,6 +11,7 @@ dependencies = [
     "mcp[cli]",
     "requests",
     "elevenlabs",
+    "mutagen",
 ]
 
 [project.optional-dependencies]

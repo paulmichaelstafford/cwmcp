@@ -15,6 +15,7 @@ def build_chapter_translations(
     level: str,
     overrides: dict | None = None,
     target_lang: str | None = None,
+    source_lang: str = "EN",
 ) -> dict:
     """Build translations.json for a chapter/level using auto builder.
 
@@ -30,7 +31,8 @@ def build_chapter_translations(
     if not chapter_dir:
         return {"error": f"Chapter {chapter_number} not found in {book}"}
 
-    marks_path = os.path.join(chapter_dir, "en", level.lower(), "marks.json")
+    src_lang = source_lang.lower()
+    marks_path = os.path.join(chapter_dir, src_lang, level.lower(), "marks.json")
     if not os.path.exists(marks_path):
         return {"error": f"marks.json not found at {marks_path}"}
 
@@ -42,10 +44,10 @@ def build_chapter_translations(
         manual_overrides = {int(k): v for k, v in overrides.items()}
 
     translations, errors, warnings = build_translations_auto(
-        client, "EN", marks, manual_overrides, target_lang=target_lang,
+        client, source_lang.upper(), marks, manual_overrides, target_lang=target_lang,
     )
 
-    output_path = os.path.join(chapter_dir, "en", level.lower(), "translations.json")
+    output_path = os.path.join(chapter_dir, src_lang, level.lower(), "translations.json")
 
     # If targeting a single language, merge into existing translations.json
     if target_lang and os.path.exists(output_path):
