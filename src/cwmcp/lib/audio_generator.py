@@ -176,7 +176,7 @@ def generate_via_mistral(api_key: str, text: str) -> tuple[bytes, list[dict]]:
     return audio_bytes, sentences
 
 
-FISH_AUDIO_TONE = "warm storytelling narrator"
+FISH_AUDIO_TONE = "soft, warm, calm storytelling narrator"
 
 
 def generate_via_fish_audio(api_key: str, text: str, language: str) -> tuple[bytes, list[dict]]:
