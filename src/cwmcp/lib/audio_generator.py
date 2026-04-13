@@ -176,14 +176,19 @@ def generate_via_mistral(api_key: str, text: str) -> tuple[bytes, list[dict]]:
     return audio_bytes, sentences
 
 
+FISH_AUDIO_TONE = "warm storytelling narrator"
+
+
 def generate_via_fish_audio(api_key: str, text: str, language: str) -> tuple[bytes, list[dict]]:
     """Generate TTS via Fish Audio API. Returns (audio_bytes, sentences)."""
     voice_id = FISH_AUDIO_VOICES.get(language.upper())
     if not voice_id:
         raise ValueError(f"No Fish Audio voice configured for language: {language}")
 
+    tts_text = f"[{FISH_AUDIO_TONE}] {text}"
+
     payload = json.dumps({
-        "text": text,
+        "text": tts_text,
         "reference_id": voice_id,
         "format": "mp3",
         "mp3_bitrate": 128,
@@ -348,38 +353,90 @@ def generate_chapter_audio(
             "message": f"Chapter has {total_words} words, max is {MAX_WORDS}. Trim before generating.",
         }
 
-    audio_segments = []
-    segment_sentences = []
-    for seg in segments:
-        audio_bytes, sentences = _generate_segment_audio(
-            seg["text"],
-            language,
-            cwtts_url,
-            cwbe_client=cwbe_client,
-            mistral_api_key=mistral_api_key,
-            fish_audio_api_key=fish_audio_api_key,
-        )
-        audio_segments.append(audio_bytes)
-        segment_sentences.append(sentences)
+    lang = language.upper()
+    use_per_mark = lang != "EN"
 
-    pause_durations = []
-    segment_offsets_ms = [0]
-    cumulative_ms = 0
-    for i in range(len(segments)):
-        seg_duration_ms = segment_sentences[i][-1]["end_ms"] if segment_sentences[i] else 0
-        cumulative_ms += seg_duration_ms
-        if i < len(segments) - 1:
-            pause_ms = (
-                PAUSE_BETWEEN_PARAGRAPHS
-                if segments[i + 1]["paragraph_idx"] != segments[i]["paragraph_idx"]
-                else PAUSE_WITHIN_PARAGRAPH
+    if use_per_mark:
+        # Non-EN: generate audio per mark (sentence) for exact timestamps.
+        # External TTS APIs (Fish Audio, Mistral) don't return sentence timestamps,
+        # so we generate each sentence individually and merge with pauses.
+        all_sentences = []
+        for seg in segments:
+            for sentence_text in _split_sentences(seg["text"]):
+                all_sentences.append({"text": sentence_text, "paragraph_idx": seg["paragraph_idx"]})
+
+        mark_audio_clips = []
+        for sent in all_sentences:
+            audio_bytes, _ = _generate_segment_audio(
+                sent["text"],
+                language,
+                cwtts_url,
+                cwbe_client=cwbe_client,
+                mistral_api_key=mistral_api_key,
+                fish_audio_api_key=fish_audio_api_key,
             )
-            pause_durations.append(pause_ms)
-            cumulative_ms += pause_ms
-            segment_offsets_ms.append(cumulative_ms)
+            mark_audio_clips.append(audio_bytes)
 
-    merged_audio = merge_audio_with_ffmpeg(audio_segments, pause_durations)
-    marks, marks_in_ms = build_marks_from_cwtts(segments, segment_sentences, segment_offsets_ms)
+        pause_durations = []
+        for i in range(len(all_sentences) - 1):
+            if all_sentences[i + 1]["paragraph_idx"] != all_sentences[i]["paragraph_idx"]:
+                pause_durations.append(PAUSE_BETWEEN_PARAGRAPHS)
+            else:
+                pause_durations.append(PAUSE_WITHIN_PARAGRAPH)
+
+        merged_audio = merge_audio_with_ffmpeg(mark_audio_clips, pause_durations)
+
+        marks = []
+        marks_in_ms = {}
+        offset_ms = 0
+        sentence_in_paragraph = {}
+        for i, sent in enumerate(all_sentences):
+            pidx = sent["paragraph_idx"]
+            sidx = sentence_in_paragraph.get(pidx, 0)
+            sentence_in_paragraph[pidx] = sidx + 1
+
+            mark_id = str(uuid.uuid4())
+            marks.append({"id": mark_id, "sentence": sidx, "paragraph": pidx, "text": sent["text"]})
+            marks_in_ms[mark_id] = offset_ms
+
+            clip_duration_ms = _get_mp3_duration_ms(mark_audio_clips[i])
+            offset_ms += clip_duration_ms
+            if i < len(pause_durations):
+                offset_ms += pause_durations[i]
+    else:
+        # EN: generate per paragraph segment — Kokoro returns real sentence timestamps.
+        audio_segments = []
+        segment_sentences = []
+        for seg in segments:
+            audio_bytes, sentences = _generate_segment_audio(
+                seg["text"],
+                language,
+                cwtts_url,
+                cwbe_client=cwbe_client,
+                mistral_api_key=mistral_api_key,
+                fish_audio_api_key=fish_audio_api_key,
+            )
+            audio_segments.append(audio_bytes)
+            segment_sentences.append(sentences)
+
+        pause_durations = []
+        segment_offsets_ms = [0]
+        cumulative_ms = 0
+        for i in range(len(segments)):
+            seg_duration_ms = segment_sentences[i][-1]["end_ms"] if segment_sentences[i] else 0
+            cumulative_ms += seg_duration_ms
+            if i < len(segments) - 1:
+                pause_ms = (
+                    PAUSE_BETWEEN_PARAGRAPHS
+                    if segments[i + 1]["paragraph_idx"] != segments[i]["paragraph_idx"]
+                    else PAUSE_WITHIN_PARAGRAPH
+                )
+                pause_durations.append(pause_ms)
+                cumulative_ms += pause_ms
+                segment_offsets_ms.append(cumulative_ms)
+
+        merged_audio = merge_audio_with_ffmpeg(audio_segments, pause_durations)
+        marks, marks_in_ms = build_marks_from_cwtts(segments, segment_sentences, segment_offsets_ms)
 
     with open(audio_cache, "wb") as f:
         f.write(merged_audio)

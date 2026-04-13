@@ -31,6 +31,15 @@ PYTHONPATH=src python3 -m pytest tests/ -v
 
 ## Key Concepts
 
+### Terminology
+
+- **Mark** — a single sentence-level segment in the audio. Each mark has a UUID, text, and a start timestamp in milliseconds. In the app, each mark is one screen — the user presses the next button to advance to the next mark. Marks are the atomic unit of playback and alignment. A typical chapter has ~10 marks.
+- **Chapter** — one story unit containing all marks. Each chapter has 18 variants (9 langs x 2 levels).
+
+In marks.json, the `paragraph` field groups marks for audio pause duration (800ms between paragraph groups, 300ms within a group). This is purely an audio production detail — in the app every mark is its own screen regardless of paragraph grouping.
+
+### Numbers
+
 - 9 languages: EN, FR, ES, DE, IT, PT, ZH, JA, KO
 - 2 levels: B1 (simple), B2 (intermediate)
 - 18 combos per chapter (9 langs x 2 levels)
@@ -68,8 +77,9 @@ Process each lang/level combo **end-to-end** before starting the next one: audio
    - **Max 100 chapters per book.** Write chapters from `text/abridged.txt`, not from `original.txt`.
 
 4. **Generate audio**
-   - **EN only:** use `generate_audio` or `generate_audio_batch` MCP tools. These go through cwbe which runs Kokoro locally.
-   - **All other languages:** call the TTS APIs directly. cwbe only handles EN.
+   - Use `generate_audio` or `generate_audio_batch` MCP tools for all languages.
+   - **EN:** generates audio per paragraph segment. Kokoro (local via cwbe) returns real sentence timestamps, so mark boundaries are accurate.
+   - **All other languages:** generates audio **per mark (sentence)**, then merges with pauses. Fish Audio and Mistral Voxtral don't return timestamps, so each mark is generated individually to get exact timing. This may cause slight voice variation between marks — an acceptable tradeoff for accurate mark boundaries. Uses 800ms pause between paragraph groups, 300ms within.
      - **FR:** Mistral Voxtral API (`mistral_api_key` from config)
      - **ES, DE, IT, PT, ZH, JA, KO:** Fish Audio API (`fish_audio_api_key` from config)
      - See TTS Voice Config table for voice IDs.
@@ -134,6 +144,8 @@ These rules make CJK alignment fast and reliable. Follow them when writing `text
 
 - **Single `[narrator]` tag** — all text uses the `[narrator]` tag. Direct quotes and dialogue are fine within narrator lines. No separate character voice tags.
 - **No sound effects** — do not use `[sfx:...]` tags. Clean narrator audio only.
+- **EN: per-paragraph generation** — Kokoro returns real sentence timestamps, so generating per paragraph preserves natural flow with accurate mark boundaries.
+- **Non-EN: per-mark generation** — Fish Audio and Mistral don't return timestamps. Each mark (sentence) is generated as a separate TTS call, then merged with silence gaps (800ms between paragraphs, 300ms within). Timestamps are exact by construction. Trade-off: slight voice variation between marks.
 
 ## TTS Voice Config
 

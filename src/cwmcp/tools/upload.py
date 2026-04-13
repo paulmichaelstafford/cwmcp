@@ -6,6 +6,19 @@ from cwmcp.tools.list_books import find_books
 from cwmcp.tools.chapter_status import find_chapter_dir
 
 
+def _find_existing_chapter_id(
+    client: CwbeClient, publication_id: str, title_prefix: str, lang: str, level: str,
+) -> str | None:
+    """Find an existing chapter ID by matching title prefix, language, and level."""
+    chapters = client.get_all_chapters(publication_id)
+    for ch in chapters:
+        if (ch.get("language") == lang.upper()
+                and ch.get("level") == level.upper()
+                and ch.get("title", "").startswith(title_prefix)):
+            return ch["id"]
+    return None
+
+
 def upload_single(
     client: CwbeClient,
     content_path: str,
@@ -14,7 +27,7 @@ def upload_single(
     lang: str,
     level: str,
 ) -> dict:
-    """Upload a single lang/level combo."""
+    """Upload a single lang/level combo. Uses PUT to update if chapter already exists."""
     books = find_books(content_path)
     book_info = next((b for b in books if b["name"] == book), None)
     if not book_info:
@@ -26,8 +39,16 @@ def upload_single(
     if not chapter_dir:
         return {"status": "FAILED", "message": f"Chapter {chapter_number} not found"}
 
+    title_prefix = f"{chapter_number:04d} - "
+    chapter_id = _find_existing_chapter_id(
+        client, book_info["publication_id"], title_prefix, lang, level,
+    )
+
     combo_dir = os.path.join(chapter_dir, lang.lower(), level.lower())
-    return do_upload(client, combo_dir, book_info["publication_id"], lang.upper(), level.upper())
+    return do_upload(
+        client, combo_dir, book_info["publication_id"], lang.upper(), level.upper(),
+        chapter_id=chapter_id,
+    )
 
 
 def upload_chapter_batch(
