@@ -1,9 +1,33 @@
 # src/cwmcp/lib/translations_helper.py
 import json
 import sys
+from enum import Enum
+
+
+class LanguageFamily(str, Enum):
+    EUROPEAN = "EUROPEAN"
+    ASIAN = "ASIAN"
+
+
+LANGUAGE_FAMILY: dict[str, LanguageFamily] = {
+    "EN": LanguageFamily.EUROPEAN,
+    "FR": LanguageFamily.EUROPEAN,
+    "ES": LanguageFamily.EUROPEAN,
+    "DE": LanguageFamily.EUROPEAN,
+    "IT": LanguageFamily.EUROPEAN,
+    "PT": LanguageFamily.EUROPEAN,
+    "ZH": LanguageFamily.ASIAN,
+    "JA": LanguageFamily.ASIAN,
+    "KO": LanguageFamily.ASIAN,
+}
 
 CJK_LANGS = {"ZH", "JA", "KO"}
 ALL_LANGS = {"EN", "FR", "ES", "DE", "IT", "PT", "ZH", "JA", "KO"}
+
+
+def same_family(lang_a: str, lang_b: str) -> bool:
+    """Return True if both languages are in the same family (both European or both Asian)."""
+    return LANGUAGE_FAMILY[lang_a.upper()] == LANGUAGE_FAMILY[lang_b.upper()]
 
 
 def align(source: str, target: str, pairs: list[tuple[str, str]]) -> list[dict]:

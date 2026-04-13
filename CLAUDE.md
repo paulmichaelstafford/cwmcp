@@ -181,6 +181,27 @@ cwbe does not produce alignments for CJK languages. Claude must build them direc
 - Map multi-word phrases when the target is a single unit (e.g., `("reached for", "手を伸ばし")`).
 - Skip function words, particles, and grammatical markers that don't map cleanly.
 
+### Phrase-level alignment for long marks (B2 text, CJK source)
+
+**Single-word pairs fail on marks longer than ~120 characters**, especially with JA source. Japanese text is inflated by particles (は、が、を、の、に) and verb endings (ました、ていた) that can't be independently mapped. With 15 single-word pairs averaging 3 chars each, you max out at ~30% source coverage on a 160-char mark — below the 40% threshold.
+
+**The fix: map long phrases that include surrounding particles and grammar.**
+
+```python
+# BAD — single words, covers 5 JA chars total:
+("夫", "husband"), ("トロイア", "Troy")
+
+# GOOD — phrase includes particles, covers 18 JA chars:
+("夫がトロイアから帰還するのを待ち続け", "waited for her husband to return from Troy")
+```
+
+**Rules of thumb:**
+- **B1 marks** (~100 chars): single-word pairs usually sufficient
+- **B2 marks** (150-200 chars): use phrase-level pairs, especially for JA/ZH source
+- **CJK source → European target** is harder than European → CJK because the 40% threshold bites harder on the verbose CJK side
+- For JA source, aim for 5-10 long phrase pairs per mark (each covering 10-25 JA chars) rather than 15+ short pairs
+- Include the particles/grammar in the JA phrase — `("妻ペーネロペーに求婚する権利を主張", "claimed the right to propose to his wife Penelope")` covers 17 chars vs `("妻", "wife")` covering 1
+
 ### Example
 
 ```python
