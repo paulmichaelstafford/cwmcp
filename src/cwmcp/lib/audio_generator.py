@@ -252,6 +252,17 @@ def merge_audio_with_ffmpeg(audio_segments: list[bytes], pause_durations: list[i
                 f.write(audio_bytes)
             segment_files.append(path)
 
+        # Detect sample rate and channels from first segment to match silence
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=sample_rate,channels",
+             "-of", "default=noprint_wrappers=1:nokey=1", segment_files[0]],
+            capture_output=True, text=True,
+        )
+        probe_lines = probe.stdout.strip().split("\n")
+        sample_rate = int(probe_lines[0]) if probe_lines[0] else 44100
+        channels = int(probe_lines[1]) if len(probe_lines) > 1 and probe_lines[1] else 1
+        ch_layout = "stereo" if channels == 2 else "mono"
+
         silence_files = []
         for i, pause_ms in enumerate(pause_durations):
             if pause_ms > 0:
@@ -259,7 +270,7 @@ def merge_audio_with_ffmpeg(audio_segments: list[bytes], pause_durations: list[i
                 subprocess.run(
                     [
                         "ffmpeg", "-y", "-f", "lavfi",
-                        "-i", f"anullsrc=r=44100:cl=mono",
+                        "-i", f"anullsrc=r={sample_rate}:cl={ch_layout}",
                         "-t", f"{pause_ms / 1000:.3f}",
                         "-c:a", "libmp3lame", "-b:a", "128k",
                         path,
