@@ -98,7 +98,9 @@ Process each lang/level combo **end-to-end** before starting the next one: audio
 
 6. **Upload** — use `upload_chapter` or `upload_batch` tools
    - Sends cached audio + marks + translations to cwbe
+   - **Always uses PUT (update) when a chapter with the same language, level, and title already exists.** The uploader auto-detects existing chapters and passes their ID to cwbe. Never POST duplicates.
    - Max 3 concurrent uploads (cwbe is on limited hardware)
+   - Delete endpoint: `DELETE /api/service/publications/{publicationId}/chapters/{chapterId}`
 
 ### File structure per chapter per lang per level
 ```

@@ -105,12 +105,19 @@ def _split_sentences(text: str) -> list[str]:
 
 
 def _get_mp3_duration_ms(audio_bytes: bytes) -> int:
-    """Get the duration of MP3 audio in milliseconds using mutagen."""
-    from mutagen.mp3 import MP3
-
-    buf = io.BytesIO(audio_bytes)
-    mp3 = MP3(buf)
-    return int(mp3.info.length * 1000)
+    """Get the duration of MP3 audio in milliseconds using ffprobe."""
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        f.write(audio_bytes)
+        tmp_path = f.name
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", tmp_path],
+            capture_output=True, text=True,
+        )
+        return int(float(result.stdout.strip()) * 1000)
+    finally:
+        os.unlink(tmp_path)
 
 
 def _build_estimated_sentences(text: str, audio_bytes: bytes) -> list[dict]:

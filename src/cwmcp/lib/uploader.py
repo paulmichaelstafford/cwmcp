@@ -110,6 +110,17 @@ def upload_chapter(
     if errors:
         return {"status": "FAILED", "message": f"{len(errors)} validation errors: {'; '.join(errors[:3])}"}
 
+    # Auto-detect existing chapter to use PUT (update) instead of POST (create)
+    if not chapter_id:
+        try:
+            existing = client.get_all_chapters(publication_id)
+            for ch in existing:
+                if ch.get("language") == language and ch.get("level") == level and ch.get("title") == title:
+                    chapter_id = ch["id"]
+                    break
+        except Exception:
+            pass  # If lookup fails, fall through to POST
+
     try:
         job = client.upload_chapter(
             publication_id, audio_bytes, marks, marks_in_ms,
