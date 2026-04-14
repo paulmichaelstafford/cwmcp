@@ -252,7 +252,7 @@ def merge_audio_with_ffmpeg(audio_segments: list[bytes], pause_durations: list[i
                 subprocess.run(
                     [
                         "ffmpeg", "-y", "-f", "lavfi",
-                        "-i", f"anullsrc=r=44100:cl=stereo",
+                        "-i", f"anullsrc=r=44100:cl=mono",
                         "-t", f"{pause_ms / 1000:.3f}",
                         "-c:a", "libmp3lame", "-b:a", "128k",
                         path,
@@ -276,7 +276,7 @@ def merge_audio_with_ffmpeg(audio_segments: list[bytes], pause_durations: list[i
             [
                 "ffmpeg", "-y", "-f", "concat", "-safe", "0",
                 "-i", concat_list_path,
-                "-c:a", "libmp3lame", "-b:a", "128k",
+                "-c", "copy",
                 output_path,
             ],
             capture_output=True,
@@ -357,18 +357,13 @@ def generate_chapter_audio(
     use_per_mark = lang != "EN"
 
     if use_per_mark:
-        # Non-EN: generate audio per mark (sentence) for exact timestamps.
-        # External TTS APIs (Fish Audio, Mistral) don't return sentence timestamps,
-        # so we generate each sentence individually and merge with pauses.
-        all_sentences = []
-        for seg in segments:
-            for sentence_text in _split_sentences(seg["text"]):
-                all_sentences.append({"text": sentence_text, "paragraph_idx": seg["paragraph_idx"]})
-
+        # Non-EN: generate audio per mark (paragraph segment) for exact timestamps.
+        # External TTS APIs (Fish Audio, Mistral) don't return timestamps,
+        # so we generate each segment individually and merge with pauses.
         mark_audio_clips = []
-        for sent in all_sentences:
+        for seg in segments:
             audio_bytes, _ = _generate_segment_audio(
-                sent["text"],
+                seg["text"],
                 language,
                 cwtts_url,
                 cwbe_client=cwbe_client,
@@ -378,25 +373,17 @@ def generate_chapter_audio(
             mark_audio_clips.append(audio_bytes)
 
         pause_durations = []
-        for i in range(len(all_sentences) - 1):
-            if all_sentences[i + 1]["paragraph_idx"] != all_sentences[i]["paragraph_idx"]:
-                pause_durations.append(PAUSE_BETWEEN_PARAGRAPHS)
-            else:
-                pause_durations.append(PAUSE_WITHIN_PARAGRAPH)
+        for i in range(len(segments) - 1):
+            pause_durations.append(PAUSE_BETWEEN_PARAGRAPHS)
 
         merged_audio = merge_audio_with_ffmpeg(mark_audio_clips, pause_durations)
 
         marks = []
         marks_in_ms = {}
         offset_ms = 0
-        sentence_in_paragraph = {}
-        for i, sent in enumerate(all_sentences):
-            pidx = sent["paragraph_idx"]
-            sidx = sentence_in_paragraph.get(pidx, 0)
-            sentence_in_paragraph[pidx] = sidx + 1
-
+        for i, seg in enumerate(segments):
             mark_id = str(uuid.uuid4())
-            marks.append({"id": mark_id, "sentence": sidx, "paragraph": pidx, "text": sent["text"]})
+            marks.append({"id": mark_id, "sentence": 0, "paragraph": seg["paragraph_idx"], "text": seg["text"]})
             marks_in_ms[mark_id] = offset_ms
 
             clip_duration_ms = _get_mp3_duration_ms(mark_audio_clips[i])
