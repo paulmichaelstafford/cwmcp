@@ -104,20 +104,67 @@ def _split_sentences(text: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
-def _get_mp3_duration_ms(audio_bytes: bytes) -> int:
-    """Get the duration of MP3 audio in milliseconds using ffprobe."""
+def _detect_paragraph_gaps(audio_bytes: bytes, expected_gaps: int) -> list[int]:
+    """Detect paragraph gap positions in merged audio using silence detection.
+
+    Returns a list of gap-end timestamps in milliseconds, one per inter-paragraph gap.
+    These are the points where speech resumes after each silence gap.
+    """
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
         f.write(audio_bytes)
         tmp_path = f.name
     try:
         result = subprocess.run(
+            ["ffmpeg", "-i", tmp_path, "-af", "silencedetect=noise=-40dB:d=0.5",
+             "-f", "null", "-"],
+            capture_output=True, text=True,
+        )
+        # Parse silence_end lines and their durations
+        silences = []
+        for line in result.stderr.split("\n"):
+            if "silence_end" in line:
+                # Format: [silencedetect ...] silence_end: 20.754014 | silence_duration: 1.089751
+                parts = line.split("silence_end:")[1]
+                end_str, dur_str = parts.split("|")
+                end_s = float(end_str.strip())
+                dur_s = float(dur_str.split(":")[1].strip())
+                silences.append((end_s, dur_s))
+
+        # Sort by duration descending and take the N longest — those are the paragraph gaps
+        silences.sort(key=lambda x: x[1], reverse=True)
+        gaps = silences[:expected_gaps]
+        # Sort back by time order
+        gaps.sort(key=lambda x: x[0])
+        return [int(end_s * 1000) for end_s, _ in gaps]
+    finally:
+        os.unlink(tmp_path)
+
+
+def _get_mp3_duration_ms(audio_bytes: bytes) -> int:
+    """Get the true playback duration of MP3 audio in milliseconds.
+
+    Decodes to WAV first because ffprobe on MP3 can misreport duration
+    due to encoder padding (especially with Mistral Voxtral output).
+    """
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        f.write(audio_bytes)
+        mp3_path = f.name
+    wav_path = mp3_path + ".wav"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", mp3_path, "-c:a", "pcm_s16le", wav_path],
+            capture_output=True, check=True,
+        )
+        result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", tmp_path],
+             "-of", "default=noprint_wrappers=1:nokey=1", wav_path],
             capture_output=True, text=True,
         )
         return int(float(result.stdout.strip()) * 1000)
     finally:
-        os.unlink(tmp_path)
+        os.unlink(mp3_path)
+        if os.path.exists(wav_path):
+            os.unlink(wav_path)
 
 
 def _build_estimated_sentences(text: str, audio_bytes: bytes) -> list[dict]:
@@ -294,7 +341,7 @@ def merge_audio_with_ffmpeg(audio_segments: list[bytes], pause_durations: list[i
             [
                 "ffmpeg", "-y", "-f", "concat", "-safe", "0",
                 "-i", concat_list_path,
-                "-c", "copy",
+                "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "128k",
                 output_path,
             ],
             capture_output=True,
