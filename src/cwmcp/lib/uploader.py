@@ -104,7 +104,10 @@ def upload_chapter(
             title = m.group(1).strip()
     chapter_num_match = re.search(r"(?:chapter|episode)-(\d+)", chapter_dir)
     if chapter_num_match:
-        title = f"{chapter_num_match.group(1)} - {title}"
+        num = chapter_num_match.group(1)
+        # Strip existing numeric prefix to avoid doubling (e.g. "0002 - 0002 - ...")
+        title = re.sub(r"^\d+\s*-\s*", "", title)
+        title = f"{num} - {title}"
 
     errors = validate_translations(marks, translations, language)
     if errors:
