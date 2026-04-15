@@ -10,16 +10,13 @@ class CwbeClient:
         self.auth = HTTPBasicAuth(user, password)
         self.base_url = CWBE_URL
 
-    def generate_tts(self, text: str, language: str, voice: str | None = None) -> dict:
-        """Call /api/service/tts. Returns {audio_base64, format, sample_rate, bitrate, sentences}."""
-        payload = {"text": text, "language": language}
-        if voice:
-            payload["voice"] = voice
+    def generate_chapter(self, language: str, marks: list[str]) -> dict:
+        """Call /api/service/tts/generate-chapter. Returns {audio_base64, marks: [{id, text, start_ms, end_ms}]}."""
         resp = requests.post(
-            f"{self.base_url}/api/service/tts",
+            f"{self.base_url}/api/service/tts/generate-chapter",
             auth=self.auth,
-            json=payload,
-            timeout=120,
+            json={"language": language, "marks": marks},
+            timeout=300,
         )
         resp.raise_for_status()
         return resp.json()

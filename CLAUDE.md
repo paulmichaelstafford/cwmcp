@@ -78,12 +78,8 @@ Process each lang/level combo **end-to-end** before starting the next one: audio
 
 4. **Generate audio**
    - Use `generate_audio` or `generate_audio_batch` MCP tools for all languages.
-   - **EN:** generates audio per paragraph segment. Kokoro (local via cwbe) returns real sentence timestamps, so mark boundaries are accurate.
-   - **All other languages:** generates audio **per mark (sentence)**, then merges with pauses. Fish Audio and Mistral Voxtral don't return timestamps, so each mark is generated individually to get exact timing. This may cause slight voice variation between marks — an acceptable tradeoff for accurate mark boundaries. Uses 800ms pause between paragraph groups, 300ms within.
-     - **FR:** Mistral Voxtral API (`mistral_api_key` from config)
-     - **ES, DE, IT, PT, ZH, JA, KO:** Fish Audio API (`fish_audio_api_key` from config)
-     - See TTS Voice Config table for voice IDs.
-   - Cache `audio.mp3` + `marks.json` + `marks_in_milliseconds.json` next to chapter.md in the same format as the MCP tool produces.
+   - All TTS is handled by the cwtts service — cwmcp just sends marks and saves the result.
+   - Cache `audio.mp3` + `marks.json` + `marks_in_milliseconds.json` next to chapter.md.
    - Skips if audio.mp3 already exists (safe to re-run).
    - Never delete audio.mp3, marks.json, or marks_in_milliseconds.json unless they have been successfully uploaded.
    - **After generating the first combo, check mark count.** If >15, rewrite chapter text before continuing.
@@ -145,9 +141,8 @@ These rules make CJK alignment fast and reliable. Follow them when writing `text
 ## Audio Production Style
 
 - **Single `[narrator]` tag** — all text uses the `[narrator]` tag. Direct quotes and dialogue are fine within narrator lines. No separate character voice tags.
-- **No sound effects** — do not use `[sfx:...]` tags. Clean narrator audio only.
-- **EN: per-paragraph generation** — Kokoro returns real sentence timestamps, so generating per paragraph preserves natural flow with accurate mark boundaries.
-- **Non-EN: per-mark generation** — Fish Audio and Mistral don't return timestamps. Each mark (sentence) is generated as a separate TTS call, then merged with silence gaps (800ms between paragraphs, 300ms within). Timestamps are exact by construction. Trade-off: slight voice variation between marks.
+- **cwtts handles everything** — cwmcp sends the mark texts and language to cwtts `/generate-chapter`. cwtts routes to the correct engine (Kokoro for EN, Voxtral for FR, Fish Audio for others), generates audio per mark, adds silence gaps, and returns the finished MP3 + mark timestamps with UUIDs.
+- **No sound effects** — clean narrator audio only.
 
 ## TTS Voice Config
 
@@ -163,7 +158,7 @@ These rules make CJK alignment fast and reliable. Follow them when writing `text
 | JA | Fish Audio | 0221478a85aa4703a410ccb405afb872 | Late Night Storyteller |
 | KO | Fish Audio | 4194b66c6ec24dc3be72a0cbd2547b61 | Kore Storytelling |
 
-EN uses Kokoro via cwbe (free, local). All other languages call external APIs directly — Mistral for FR, Fish Audio for the rest. cwbe does not handle non-EN TTS. API keys are in `~/.cwmcp/config.properties` (`mistral_api_key`, `fish_audio_api_key`).
+All TTS generation is handled by the cwtts Docker service. cwmcp sends marks + language to `POST /generate-chapter` and receives finished audio + mark timestamps. API keys (Mistral, Fish Audio) are configured on the cwtts pod, not in cwmcp. cwmcp only needs `cwtts_url`, `cwtts_user`, and `cwtts_password` in `~/.cwmcp/config.properties`.
 
 ## Translation & Alignment Rules
 

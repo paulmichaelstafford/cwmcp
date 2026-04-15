@@ -163,8 +163,7 @@ async def upload_batch(book: str, chapter_number: int, workers: int = 3) -> str:
 @mcp.tool()
 async def generate_audio(book: str, chapter_number: int, lang: str, level: str) -> str:
     """Generate audio for a single lang/level combo.
-    Routes to the appropriate TTS engine based on language:
-    EN uses Kokoro (local via cwbe), FR uses Mistral Voxtral, others use Fish Audio.
+    Routes to cwbe which proxies to cwtts for all TTS engines.
     Caches audio.mp3, marks.json, marks_in_milliseconds.json next to chapter.md.
     Skips if audio already exists.
 
@@ -178,10 +177,8 @@ async def generate_audio(book: str, chapter_number: int, lang: str, level: str) 
     client = get_client()
     result = await asyncio.to_thread(
         generate_single,
-        config.cwtts_url, config.content_path, book, chapter_number, lang, level,
+        config.content_path, book, chapter_number, lang, level,
         cwbe_client=client,
-        mistral_api_key=config.mistral_api_key,
-        fish_audio_api_key=config.fish_audio_api_key,
     )
     return json.dumps(result, indent=2)
 
@@ -189,8 +186,7 @@ async def generate_audio(book: str, chapter_number: int, lang: str, level: str) 
 @mcp.tool()
 async def generate_audio_batch(book: str, chapter_number: int) -> str:
     """Generate audio for all lang/level combos that have chapter.md but no audio.mp3.
-    Routes to the appropriate TTS engine based on language:
-    EN uses Kokoro (local via cwbe), FR uses Mistral Voxtral, others use Fish Audio.
+    Routes to cwbe which proxies to cwtts for all TTS engines.
 
     Args:
         book: Book directory name (e.g. "everyday-life")
@@ -200,10 +196,8 @@ async def generate_audio_batch(book: str, chapter_number: int) -> str:
     client = get_client()
     results = await asyncio.to_thread(
         generate_batch,
-        config.cwtts_url, config.content_path, book, chapter_number,
+        config.content_path, book, chapter_number,
         cwbe_client=client,
-        mistral_api_key=config.mistral_api_key,
-        fish_audio_api_key=config.fish_audio_api_key,
     )
     return json.dumps(results, indent=2)
 
