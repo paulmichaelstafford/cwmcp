@@ -73,7 +73,7 @@ Process each lang/level combo **end-to-end** before starting the next one: audio
    - Front matter: `title: Chapter Title`
    - Body: `[narrator] Text here.` — all text uses the `[narrator]` tag. Direct quotes and dialogue within narrator lines are fine.
    - B1 = simple, B2 = intermediate
-   - **Max 200 words per chapter** (both levels). Create more chapters if needed rather than exceeding the limit.
+   - **Max 200 words per chapter** (both levels). Create more chapters if needed rather than exceeding the limit. Note: the audio generator hard-caps at 250 words, but aim for ~180 words because translated versions (especially FR, ES, DE) expand significantly and may hit the 250 cap.
    - **Max 100 chapters per book.** Write chapters from `text/abridged.txt`, not from `original.txt`.
 
 4. **Generate audio**
@@ -164,7 +164,8 @@ All TTS generation is handled by the cwtts Docker service. cwmcp sends marks + l
 
 - The `build_translations` MCP tool handles translation and alignment. It translates each mark to 8 target languages and computes word-level alignments.
 - **European-European pairs (EN, FR, ES, DE, IT, PT ↔ EN, FR, ES, DE, IT, PT):** Use awesome-align via cwbe `/api/service/align`. Gets 95-100% coverage — usually passes without manual work.
-- **Any pair involving CJK (ZH, JA, KO):** cwbe returns **empty `tokenAlignments`** for these pairs. Claude must always build CJK alignments itself using the word-pair approach (see below).
+- **CJK-CJK pairs (ZH, JA, KO ↔ ZH, JA, KO):** Also auto-align via cwbe. Gets ~50%+ coverage — usually passes.
+- **Any CJK↔European pair:** cwbe returns **empty `tokenAlignments`**. Claude must always build these alignments using the word-pair approach (see below). This means 6 marks × 6 target languages = 36 empty pairs per CJK source combo, or 18 empty pairs per European source combo (6 marks × 3 CJK targets).
 - Format: `TokenAlignment { sourceStart, sourceEnd, targetStart, targetEnd }` — all **inclusive** character offsets (0-based).
 - Target languages: EN, FR, ES, DE, IT, PT, ZH, JA, KO (8 targets per source, excluding source language).
 - **Coverage thresholds** — cwbe validates that alphanumeric characters (`isLetterOrDigit()`) in both source and target text are covered by alignment ranges. Thresholds: **70% for European-European pairs**, **40% for any pair involving CJK**.

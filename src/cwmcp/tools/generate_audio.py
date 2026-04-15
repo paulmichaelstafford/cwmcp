@@ -16,9 +16,6 @@ def find_chapter_dir(content_path: str, book: str, chapter_number: int) -> str |
             continue
         pattern = os.path.join(book_dir, f"chapter-{chapter_number:04d}-*")
         matches = glob.glob(pattern)
-        if not matches:
-            pattern = os.path.join(book_dir, f"episode-{chapter_number:04d}-*")
-            matches = glob.glob(pattern)
         if matches:
             return matches[0]
     return None
