@@ -170,6 +170,7 @@ All TTS generation is handled by the cwtts Docker service. cwmcp sends marks + l
 - Target languages: EN, FR, ES, DE, IT, PT, ZH, JA, KO (8 targets per source, excluding source language).
 - **Coverage thresholds** — cwbe validates that alphanumeric characters (`isLetterOrDigit()`) in both source and target text are covered by alignment ranges. Thresholds: **70% for European-European pairs**, **40% for any pair involving CJK**.
 - **Max 3 concurrent requests** to cwbe/awesome-align. The server is on limited hardware.
+- **429 rate limiting** — the `/api/service/translate-texts` endpoint can return 429 when overloaded. When running multiple agents in parallel, each calling `build_translations`, this is likely. Retry with exponential backoff (start at 5s, max 30s) on 429 responses.
 
 ## CJK Alignment (ZH, JA, KO)
 
