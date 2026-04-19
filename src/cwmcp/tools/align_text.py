@@ -1,8 +1,9 @@
+# src/cwmcp/tools/align_text.py
 from cwmcp.lib.cwbe_client import CwbeClient
 from cwmcp.lib.translations_helper import check_coverage, min_coverage_for
 
 
-def align_text_pair(
+async def align_text_pair(
     client: CwbeClient,
     source_lang: str,
     source_text: str,
@@ -10,7 +11,7 @@ def align_text_pair(
     target_text: str,
 ) -> dict:
     """Call awesome-align on a single source/target pair."""
-    result = client.align(source_lang, source_text, {target_lang: target_text})
+    result = await client.align(source_lang, source_text, {target_lang: target_text})
 
     alignments = []
     for tr in result.get("translationResults", []):

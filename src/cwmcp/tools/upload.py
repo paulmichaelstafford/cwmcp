@@ -1,4 +1,6 @@
+# src/cwmcp/tools/upload.py
 import os
+
 from cwmcp.lib.cwbe_client import CwbeClient
 from cwmcp.lib.uploader import upload_chapter as do_upload
 from cwmcp.lib.batch_uploader import upload_batch as do_batch
@@ -6,11 +8,10 @@ from cwmcp.tools.list_books import find_books
 from cwmcp.tools.chapter_status import find_chapter_dir
 
 
-def _find_existing_chapter_id(
+async def _find_existing_chapter_id(
     client: CwbeClient, publication_id: str, title_prefix: str, lang: str, level: str,
 ) -> str | None:
-    """Find an existing chapter ID by matching title prefix, language, and level."""
-    chapters = client.get_all_chapters(publication_id)
+    chapters = await client.get_all_chapters(publication_id)
     for ch in chapters:
         if (ch.get("language") == lang.upper()
                 and ch.get("level") == level.upper()
@@ -19,7 +20,7 @@ def _find_existing_chapter_id(
     return None
 
 
-def upload_single(
+async def upload_single(
     client: CwbeClient,
     content_path: str,
     book: str,
@@ -40,18 +41,18 @@ def upload_single(
         return {"status": "FAILED", "message": f"Chapter {chapter_number} not found"}
 
     title_prefix = f"{chapter_number:04d} - "
-    chapter_id = _find_existing_chapter_id(
+    chapter_id = await _find_existing_chapter_id(
         client, book_info["publication_id"], title_prefix, lang, level,
     )
 
     combo_dir = os.path.join(chapter_dir, lang.lower(), level.lower())
-    return do_upload(
+    return await do_upload(
         client, combo_dir, book_info["publication_id"], lang.upper(), level.upper(),
         chapter_id=chapter_id,
     )
 
 
-def upload_chapter_batch(
+async def upload_chapter_batch(
     client: CwbeClient,
     content_path: str,
     book: str,
@@ -70,7 +71,7 @@ def upload_chapter_batch(
     if not chapter_dir:
         return {"error": f"Chapter {chapter_number} not found"}
 
-    results = do_batch(client, chapter_dir, book_info["publication_id"], workers)
+    results = await do_batch(client, chapter_dir, book_info["publication_id"], workers)
     succeeded = sum(1 for r in results if r["status"] == "COMPLETED")
     failed = sum(1 for r in results if r["status"] == "FAILED")
     return {

@@ -1,6 +1,6 @@
 # src/cwmcp/tools/generate_audio.py
-import os
 import glob
+import os
 
 from cwmcp.lib.audio_generator import generate_chapter_audio
 
@@ -21,7 +21,7 @@ def find_chapter_dir(content_path: str, book: str, chapter_number: int) -> str |
     return None
 
 
-def generate_single(
+async def generate_single(
     content_path: str,
     book: str,
     chapter_number: int,
@@ -38,14 +38,14 @@ def generate_single(
     if not os.path.exists(chapter_md):
         return {"status": "error", "message": f"No chapter.md at {chapter_md}"}
 
-    return generate_chapter_audio(
+    return await generate_chapter_audio(
         chapter_md_path=chapter_md,
         language=lang.upper(),
         cwbe_client=cwbe_client,
     )
 
 
-def generate_batch(
+async def generate_batch(
     content_path: str,
     book: str,
     chapter_number: int,
@@ -67,7 +67,7 @@ def generate_batch(
                 results.append({"lang": lang.upper(), "level": level.upper(), "status": "skipped", "message": "Audio already exists"})
                 continue
 
-            result = generate_chapter_audio(
+            result = await generate_chapter_audio(
                 chapter_md_path=chapter_md,
                 language=lang.upper(),
                 cwbe_client=cwbe_client,

@@ -6,11 +6,14 @@ saves the returned audio.mp3, marks.json, and marks_in_milliseconds.json next to
 """
 import base64
 import json
+import logging
 import os
 import re
 
 
 MAX_WORDS = 250
+
+log = logging.getLogger("cwmcp.audio")
 
 
 def parse_chapter(filepath: str) -> tuple[str, list[str]]:
@@ -44,16 +47,12 @@ def parse_chapter(filepath: str) -> tuple[str, list[str]]:
     return title, marks
 
 
-def generate_chapter_audio(
+async def generate_chapter_audio(
     chapter_md_path: str,
     language: str,
     cwbe_client,
 ) -> dict:
     """Generate audio for a chapter.md file via cwbe /api/service/tts/generate-chapter.
-
-    Sends marks + language to cwbe. Saves audio.mp3, marks.json,
-    marks_in_milliseconds.json next to chapter.md.
-    Skips if audio already exists.
 
     Returns: {"status": "ok"|"skipped"|"error", ...}
     """
@@ -77,17 +76,16 @@ def generate_chapter_audio(
     if not mark_texts:
         return {"status": "error", "message": "No marks found in chapter.md"}
 
+    log.info("tts %s marks=%d words=%d", language, len(mark_texts), total_words)
     try:
-        data = cwbe_client.generate_chapter(language=language.upper(), marks=mark_texts)
+        data = await cwbe_client.generate_chapter(language=language.upper(), marks=mark_texts)
     except Exception as e:
         return {"status": "error", "message": f"cwbe generate_chapter failed: {e}"}
 
-    # Save audio
     audio_bytes = base64.b64decode(data["audio_base64"])
     with open(audio_cache, "wb") as f:
         f.write(audio_bytes)
 
-    # Build marks.json and marks_in_milliseconds.json from response
     marks = []
     marks_in_ms = {}
     for i, m in enumerate(data["marks"]):

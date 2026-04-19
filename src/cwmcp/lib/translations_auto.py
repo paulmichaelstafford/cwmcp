@@ -3,25 +3,14 @@ from cwmcp.lib.cwbe_client import CwbeClient
 from cwmcp.lib.translations_helper import check_coverage, min_coverage_for, ALL_LANGS
 
 
-def build_translations_auto(
+async def build_translations_auto(
     client: CwbeClient,
     source_lang: str,
     marks: list[dict],
     manual_overrides: dict | None = None,
     target_lang: str | None = None,
 ) -> tuple[list, list, list]:
-    """Build translations.json using cwbe translate + align endpoints.
-
-    Args:
-        client: CwbeClient instance
-        source_lang: Source language code (e.g. "EN")
-        marks: List of mark dicts from marks.json
-        manual_overrides: Optional {mark_idx: {lang: {"text": ..., "tokenAlignments": [...]}}}
-        target_lang: Optional single target language to process (e.g. "DE").
-                     If set, only translates+aligns for that language.
-
-    Returns: (translations_list, errors, warnings)
-    """
+    """Build translations.json using cwbe translate + align endpoints."""
     manual_overrides = manual_overrides or {}
     if target_lang:
         target_langs = [target_lang.upper()]
@@ -29,7 +18,7 @@ def build_translations_auto(
         target_langs = sorted(ALL_LANGS - {source_lang})
     texts = [m["text"] for m in marks]
 
-    all_translations = client.translate_texts(source_lang, texts)
+    all_translations = await client.translate_texts(source_lang, texts)
 
     result = []
     errors = []
@@ -53,7 +42,7 @@ def build_translations_auto(
         align_result = None
         if targets_for_align:
             try:
-                align_result = client.align(source_lang, source_text, targets_for_align)
+                align_result = await client.align(source_lang, source_text, targets_for_align)
             except Exception as e:
                 errors.append(f"Mark {mark_idx}: align failed: {e}")
 

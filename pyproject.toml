@@ -9,6 +9,7 @@ description = "CollapsingWave MCP Server — audiobook pipeline tools for Claude
 requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]",
+    "httpx",
     "requests",
     "elevenlabs",
     "mutagen",

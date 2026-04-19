@@ -1,11 +1,15 @@
 # src/cwmcp/lib/uploader.py
+import asyncio
 import json
+import logging
 import os
 import re
 import time
 
 from cwmcp.lib.cwbe_client import CwbeClient
 from cwmcp.lib.translations_helper import ALL_LANGS
+
+log = logging.getLogger("cwmcp.upload")
 
 
 def validate_translations(marks: list, translations: list, language: str) -> list[str]:
@@ -64,7 +68,7 @@ def validate_translations(marks: list, translations: list, language: str) -> lis
     return errors
 
 
-def upload_chapter(
+async def upload_chapter(
     client: CwbeClient,
     chapter_dir: str,
     publication_id: str,
@@ -105,7 +109,6 @@ def upload_chapter(
     chapter_num_match = re.search(r"(?:chapter|episode)-(\d+)", chapter_dir)
     if chapter_num_match:
         num = chapter_num_match.group(1)
-        # Strip existing numeric prefix to avoid doubling (e.g. "0002 - 0002 - ...")
         title = re.sub(r"^\d+\s*-\s*", "", title)
         title = f"{num} - {title}"
 
@@ -113,19 +116,18 @@ def upload_chapter(
     if errors:
         return {"status": "FAILED", "message": f"{len(errors)} validation errors: {'; '.join(errors[:3])}"}
 
-    # Auto-detect existing chapter to use PUT (update) instead of POST (create)
     if not chapter_id:
         try:
-            existing = client.get_all_chapters(publication_id)
+            existing = await client.get_all_chapters(publication_id)
             for ch in existing:
                 if ch.get("language") == language and ch.get("level") == level and ch.get("title") == title:
                     chapter_id = ch["id"]
                     break
-        except Exception:
-            pass  # If lookup fails, fall through to POST
+        except Exception as e:
+            log.warning("existing-chapter lookup failed for %s/%s: %s", language, level, e)
 
     try:
-        job = client.upload_chapter(
+        job = await client.upload_chapter(
             publication_id, audio_bytes, marks, marks_in_ms,
             title, language, level, chapter_id, translations,
         )
@@ -133,20 +135,23 @@ def upload_chapter(
         return {"status": "FAILED", "message": f"Upload error: {e}"}
 
     job_id = job["id"]
+    log.info("upload %s/%s queued job=%s", language, level, job_id)
     start = time.time()
     while time.time() - start < 300:
         try:
-            job = client.get_job(job_id)
+            job = await client.get_job(job_id)
             if job["status"] != "PROCESSING":
                 if job["status"] == "COMPLETED":
                     os.remove(audio_path)
+                log.info("upload %s/%s job=%s -> %s", language, level, job_id, job["status"])
                 return {
                     "status": job["status"],
                     "job_id": job_id,
                     "message": job.get("message", ""),
                 }
-        except Exception:
-            pass
-        time.sleep(2)
+        except Exception as e:
+            log.debug("poll failed for job=%s: %s", job_id, e)
+        await asyncio.sleep(2)
 
+    log.warning("upload %s/%s job=%s TIMEOUT after 300s", language, level, job_id)
     return {"status": "TIMEOUT", "job_id": job_id, "message": "Job did not complete within 300s"}
