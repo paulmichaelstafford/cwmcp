@@ -15,16 +15,17 @@ class CwbeClient:
         self.auth = httpx.BasicAuth(user, password)
         self.base_url = CWBE_URL
         self._client: httpx.AsyncClient | None = None
+        # cwtts is single-threaded — serialize concurrent callers here so they
+        # queue in asyncio (cancels cleanly) instead of stacking inside httpx's
+        # connection pool (where cancellation can hang and crash the MCP stdio).
+        self._tts_semaphore = asyncio.Semaphore(1)
 
     def _get(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            # Per-phase httpx timeouts keep socket-level stalls bounded.
-            # Paired with a total wall-clock deadline in _request() so a slowly
-            # trickling response can't blow past the MCP client's 15-min abort.
             self._client = httpx.AsyncClient(
                 auth=self.auth,
                 base_url=self.base_url,
-                timeout=httpx.Timeout(connect=15.0, read=60.0, write=60.0, pool=30.0),
+                timeout=httpx.Timeout(connect=15.0, read=240.0, write=60.0, pool=30.0),
                 limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             )
         return self._client
@@ -33,29 +34,40 @@ class CwbeClient:
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
 
-    async def _request(self, method: str, path: str, *, deadline: float = 120.0, **kwargs) -> httpx.Response:
+    async def _request(self, method: str, path: str, *, deadline: float | None = None, **kwargs) -> httpx.Response:
+        # Rely on httpx's own timeout — it cancels cleanly through the pool.
+        # An earlier asyncio.wait_for wrapper could hang if the underlying
+        # httpx task was stuck on a pool/semaphore acquire during cancel.
+        if deadline is not None:
+            kwargs.setdefault("timeout", deadline)
         log.debug("cwbe %s %s", method, path)
         try:
-            resp = await asyncio.wait_for(
-                self._get().request(method, path, **kwargs),
-                timeout=deadline,
-            )
-        except asyncio.TimeoutError as e:
-            log.warning("cwbe %s %s hard-deadline %.0fs hit", method, path, deadline)
-            raise TimeoutError(f"cwbe {method} {path} exceeded {deadline:.0f}s") from e
+            resp = await self._get().request(method, path, **kwargs)
+        except httpx.TimeoutException as e:
+            log.warning("cwbe %s %s timeout: %s", method, path, e)
+            raise TimeoutError(f"cwbe {method} {path} timed out: {e}") from e
         log.debug("cwbe %s %s -> %d", method, path, resp.status_code)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            body = (resp.text or "")[:500]
+            log.warning("cwbe %s %s -> %d body=%r", method, path, resp.status_code, body)
+            raise httpx.HTTPStatusError(
+                f"HTTP {resp.status_code} on {method} {path}: {body}",
+                request=resp.request,
+                response=resp,
+            )
         return resp
 
     async def generate_chapter(self, language: str, marks: list[str]) -> dict:
-        # cwtts is slow (~30-60s per chapter historically; up to ~90s under load).
-        # 240s hard cap is ample headroom and well under the 15-min MCP abort.
-        resp = await self._request(
-            "POST",
-            "/api/service/tts/generate-chapter",
-            json={"language": language, "marks": marks},
-            deadline=240.0,
-        )
+        # cwtts takes ~30-90s per chapter and processes serially. The semaphore
+        # queues concurrent callers on our side so we don't pile requests into
+        # httpx where cancellation gets tangled up in pool state.
+        async with self._tts_semaphore:
+            resp = await self._request(
+                "POST",
+                "/api/service/tts/generate-chapter",
+                json={"language": language, "marks": marks},
+                deadline=240.0,
+            )
         return resp.json()
 
     async def translate_texts(self, source_lang: str, texts: list[str], batch_size: int = 5) -> dict[str, list[str]]:
