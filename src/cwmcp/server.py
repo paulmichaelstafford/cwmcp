@@ -50,11 +50,23 @@ def _boost_default_executor() -> None:
 
 
 def _log_call(name: str):
-    """Decorator: log tool entry + duration + outcome to stderr."""
+    """Decorator: log tool entry + duration + outcome to stderr. Catches
+    exceptions and returns a JSON error string so the stdio transport never
+    sees an uncaught exception (which can race with MCP-client aborts and
+    tear down the whole connection)."""
     def wrap(fn):
         import functools
+        import inspect
         import time as _t
-        if asyncio.iscoroutinefunction(fn):
+
+        def _error_json(exc: BaseException) -> str:
+            return json.dumps({
+                "status": "error",
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+            })
+
+        if inspect.iscoroutinefunction(fn):
             @functools.wraps(fn)
             async def awrapper(*args, **kwargs):
                 start = _t.time()
@@ -63,9 +75,12 @@ def _log_call(name: str):
                     result = await fn(*args, **kwargs)
                     log.info("done %s in %.1fs", name, _t.time() - start)
                     return result
+                except asyncio.CancelledError:
+                    log.warning("cancelled %s after %.1fs", name, _t.time() - start)
+                    raise
                 except Exception as e:
                     log.exception("error %s after %.1fs: %s", name, _t.time() - start, e)
-                    raise
+                    return _error_json(e)
             return awrapper
 
         @functools.wraps(fn)
@@ -78,7 +93,7 @@ def _log_call(name: str):
                 return result
             except Exception as e:
                 log.exception("error %s after %.1fs: %s", name, _t.time() - start, e)
-                raise
+                return _error_json(e)
         return swrapper
     return wrap
 

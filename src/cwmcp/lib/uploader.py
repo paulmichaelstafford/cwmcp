@@ -136,8 +136,11 @@ async def upload_chapter(
 
     job_id = job["id"]
     log.info("upload %s/%s queued job=%s", language, level, job_id)
+    # Keep total poll window short enough that the outer tool-call wall-clock
+    # stays well under the MCP client's 15-min abort. 180s is generous for cwbe.
+    poll_deadline = 180
     start = time.time()
-    while time.time() - start < 300:
+    while time.time() - start < poll_deadline:
         try:
             job = await client.get_job(job_id)
             if job["status"] != "PROCESSING":
@@ -153,5 +156,9 @@ async def upload_chapter(
             log.debug("poll failed for job=%s: %s", job_id, e)
         await asyncio.sleep(2)
 
-    log.warning("upload %s/%s job=%s TIMEOUT after 300s", language, level, job_id)
-    return {"status": "TIMEOUT", "job_id": job_id, "message": "Job did not complete within 300s"}
+    log.warning("upload %s/%s job=%s PENDING after %ds (still processing server-side)", language, level, job_id, poll_deadline)
+    return {
+        "status": "PENDING",
+        "job_id": job_id,
+        "message": f"Job queued; still processing after {poll_deadline}s. Check cwbe directly or re-query later.",
+    }

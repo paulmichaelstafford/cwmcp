@@ -1,4 +1,5 @@
 # src/cwmcp/lib/cwbe_client.py
+import asyncio
 import json
 import logging
 
@@ -17,10 +18,13 @@ class CwbeClient:
 
     def _get(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
+            # Per-phase httpx timeouts keep socket-level stalls bounded.
+            # Paired with a total wall-clock deadline in _request() so a slowly
+            # trickling response can't blow past the MCP client's 15-min abort.
             self._client = httpx.AsyncClient(
                 auth=self.auth,
                 base_url=self.base_url,
-                timeout=httpx.Timeout(300.0),
+                timeout=httpx.Timeout(connect=15.0, read=60.0, write=60.0, pool=30.0),
                 limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             )
         return self._client
@@ -29,18 +33,28 @@ class CwbeClient:
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
 
-    async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+    async def _request(self, method: str, path: str, *, deadline: float = 120.0, **kwargs) -> httpx.Response:
         log.debug("cwbe %s %s", method, path)
-        resp = await self._get().request(method, path, **kwargs)
+        try:
+            resp = await asyncio.wait_for(
+                self._get().request(method, path, **kwargs),
+                timeout=deadline,
+            )
+        except asyncio.TimeoutError as e:
+            log.warning("cwbe %s %s hard-deadline %.0fs hit", method, path, deadline)
+            raise TimeoutError(f"cwbe {method} {path} exceeded {deadline:.0f}s") from e
         log.debug("cwbe %s %s -> %d", method, path, resp.status_code)
         resp.raise_for_status()
         return resp
 
     async def generate_chapter(self, language: str, marks: list[str]) -> dict:
+        # cwtts is slow (~30-60s per chapter historically; up to ~90s under load).
+        # 240s hard cap is ample headroom and well under the 15-min MCP abort.
         resp = await self._request(
             "POST",
             "/api/service/tts/generate-chapter",
             json={"language": language, "marks": marks},
+            deadline=240.0,
         )
         return resp.json()
 
@@ -98,7 +112,8 @@ class CwbeClient:
             files["translations"] = (None, json.dumps(translations), "application/json")
 
         method = "PUT" if chapter_id else "POST"
-        resp = await self._request(method, path, files=files)
+        # Upload is multipart + server-side processing; 180s is plenty for queueing.
+        resp = await self._request(method, path, files=files, deadline=180.0)
         return resp.json()
 
     async def get_job(self, job_id: str) -> dict:
