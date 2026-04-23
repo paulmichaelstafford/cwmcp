@@ -88,9 +88,11 @@ In marks.json, the `paragraph` field groups marks for audio pause duration (800m
 
 **Retry after failure:** translations are not cached (Gemini is cheap enough to re-run). The Job `message` (and cwbe logs) contains `sourceAudioBlobName=...` for that specific call — pass it back as `source_audio_blob_name` to skip re-TTS on retry. The blob name is **per-call**: it belongs to one source language, so don't reuse it across different `language` calls.
 
-### Concurrency Cap — max 2 chapters at a time
+### Concurrency Cap — max 2 chapters concurrently
 
-**Never run more than 2 chapter ingests concurrently.** The cwbe host has only 4 CPU threads and a single replica of each service (cwbe, cwtts, cwseg, awesome-align); running 3+ chapters in parallel starves the JobProcessor pool and risks re-introducing the thread-pool deadlock we hit during Art of War ch4 retries. If you need to process 18 combos, batch them as 9×2, not 6×3 or 18-at-once.
+**Run chapter ingests with up to 2 concurrently, never more.** The cwbe host has only 4 CPU threads and a single replica of each service (cwbe, cwtts, cwseg, awesome-align); running 3+ chapters concurrently starves the JobProcessor pool and risks re-introducing the thread-pool deadlock we hit during Art of War ch4 retries. If you need to process 18 combos, run them 9×2 (concurrency=2), not 6×3 or 18-at-once. The `2` here is a tunable tied to current hardware — bump it when cwbe is scaled up.
+
+**Gotcha — the MCP `create_chapter_from_marks` tool serializes within a single Claude session.** Even if you put two `mcp__cwmcp__create_chapter_from_marks` calls in the same assistant turn, the runtime runs them back-to-back, not in parallel (verified via cwbe HTTP arrival timestamps). To actually get two in flight at once, call cwbe directly from a short Python driver using `asyncio.gather` + `asyncio.Semaphore(2)` against `/api/service/publications/{id}/chapters/from-marks` + poll `/api/service/jobs/{id}`. Auth is basic with `cwbe_user`/`cwbe_password` from `~/.cwmcp/config.properties`. The MCP tool is still fine for one-offs; use the async driver whenever you're batching more than ~4 combos.
 
 ### No local chapter files
 
