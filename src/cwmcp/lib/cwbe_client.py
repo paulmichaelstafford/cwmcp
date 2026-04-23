@@ -1,5 +1,4 @@
 # src/cwmcp/lib/cwbe_client.py
-import asyncio
 import json
 import logging
 
@@ -15,10 +14,6 @@ class CwbeClient:
         self.auth = httpx.BasicAuth(user, password)
         self.base_url = CWBE_URL
         self._client: httpx.AsyncClient | None = None
-        # cwtts is single-threaded — serialize concurrent callers here so they
-        # queue in asyncio (cancels cleanly) instead of stacking inside httpx's
-        # connection pool (where cancellation can hang and crash the MCP stdio).
-        self._tts_semaphore = asyncio.Semaphore(1)
 
     def _get(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -57,53 +52,82 @@ class CwbeClient:
             )
         return resp
 
-    async def generate_chapter(self, language: str, marks: list[str]) -> dict:
-        # cwtts takes ~30-90s per chapter and processes serially. The semaphore
-        # queues concurrent callers on our side so we don't pile requests into
-        # httpx where cancellation gets tangled up in pool state.
-        async with self._tts_semaphore:
-            resp = await self._request(
-                "POST",
-                "/api/service/tts/generate-chapter",
-                json={"language": language, "marks": marks},
-                deadline=240.0,
-            )
+    # -----------------------------------------------------------------
+    # Lego-block passthroughs to cwbe service endpoints. Use these when
+    # create_chapter_from_marks isn't right — e.g., you're building a
+    # chapter zip manually to patch a single mark and upload via
+    # upload_chapter_from_zip.
+    # -----------------------------------------------------------------
+
+    async def generate_audio(self, language: str, marks: list[str]) -> dict:
+        """POST /tts/generate-chapter — cwtts audio + mark timings."""
+        resp = await self._request(
+            "POST",
+            "/api/service/tts/generate-chapter",
+            json={"language": language, "marks": marks},
+            deadline=240.0,
+        )
         return resp.json()
 
-    async def translate_texts(self, source_lang: str, texts: list[str], batch_size: int = 5) -> dict[str, list[str]]:
-        all_results: dict[str, list[str]] | None = None
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
-            resp = await self._request(
-                "POST",
-                "/api/service/translate-texts",
-                json={"sourceLanguage": source_lang, "texts": batch},
-                timeout=60,
-            )
-            batch_result = resp.json()
-            if all_results is None:
-                all_results = batch_result
-            else:
-                for lang in all_results:
-                    all_results[lang].extend(batch_result[lang])
-        return all_results or {}
+    async def translate_texts(self, source_language: str, texts: list[str]) -> dict[str, list[str]]:
+        """POST /translate-texts — Gemini sentence translation; map of lang → list."""
+        resp = await self._request(
+            "POST",
+            "/api/service/translate-texts",
+            json={"sourceLanguage": source_language, "texts": texts},
+            deadline=240.0,
+        )
+        return resp.json()
 
-    async def align(self, source_lang: str, source_text: str, targets: dict[str, str]) -> dict:
+    async def align(self, source_language: str, source_text: str, targets: dict[str, str]) -> dict:
+        """POST /align — awesome-align EU↔EU token alignments per target."""
         resp = await self._request(
             "POST",
             "/api/service/align",
             json={
-                "sourceLanguage": source_lang,
+                "sourceLanguage": source_language,
                 "sourceText": source_text,
                 "targets": targets,
             },
-            timeout=60,
+            deadline=240.0,
         )
         return resp.json()
 
-    async def upload_chapter(self, publication_id: str, audio_bytes: bytes, marks: list,
-                              marks_in_ms: dict, title: str, language: str, level: str,
-                              chapter_id: str | None = None, translations: list | None = None) -> dict:
+    async def gloss_tokens(
+        self,
+        source_language: str,
+        sentence_text: str,
+        sentence_translations: dict[str, str],
+        tokens: list[str],
+    ) -> dict:
+        """POST /debug/gemini/gloss-tokens — per-token glosses for CJK tokens."""
+        resp = await self._request(
+            "POST",
+            "/api/service/debug/gemini/gloss-tokens",
+            json={
+                "sourceLanguage": source_language,
+                "sentenceText": sentence_text,
+                "sentenceTranslations": sentence_translations,
+                "tokens": tokens,
+            },
+            deadline=240.0,
+        )
+        return resp.json()
+
+    async def upload_chapter_from_zip(
+        self,
+        publication_id: str,
+        audio_bytes: bytes,
+        marks: list,
+        marks_in_ms: dict,
+        title: str,
+        language: str,
+        level: str,
+        chapter_id: str | None = None,
+        translations: list | None = None,
+    ) -> dict:
+        """POST/PUT /chapters/from-audio — multipart upload of a pre-built
+        chapter. PUTs if chapter_id is given (update), else POST (create)."""
         path = f"/api/service/publications/{publication_id}/chapters/from-audio"
         dto = {
             "title": title,
@@ -124,8 +148,110 @@ class CwbeClient:
             files["translations"] = (None, json.dumps(translations), "application/json")
 
         method = "PUT" if chapter_id else "POST"
-        # Upload is multipart + server-side processing; 180s is plenty for queueing.
-        resp = await self._request(method, path, files=files, deadline=180.0)
+        resp = await self._request(method, path, files=files, deadline=240.0)
+        return resp.json()
+
+    # -----------------------------------------------------------------
+    # Publication CRUD
+    # -----------------------------------------------------------------
+
+    async def create_publication(
+        self,
+        title: str,
+        publication_type: str,
+        copyright_terms: list[str],
+        headers: dict[str, str],
+        descriptions: dict[str, str],
+        readme: str,
+        cover_bytes: bytes,
+        cover_filename: str = "cover.jpg",
+        archived: bool = False,
+        is_complete: bool = False,
+    ) -> dict:
+        """POST /publications — create a new publication."""
+        dto = {
+            "title": title,
+            "publicationType": publication_type,
+            "copyrightTerms": copyright_terms,
+            "archived": archived,
+            "isComplete": is_complete,
+            "headers": headers,
+            "descriptions": descriptions,
+            "readme": readme,
+        }
+        files = {
+            "dto": (None, json.dumps(dto), "application/json"),
+            "jpeg_file": (cover_filename, cover_bytes, "image/jpeg"),
+        }
+        resp = await self._request("POST", "/api/service/publications", files=files, deadline=60.0)
+        return resp.json()
+
+    async def update_publication(
+        self,
+        publication_id: str,
+        dto: dict,
+        cover_bytes: bytes | None = None,
+        cover_filename: str = "cover.jpg",
+    ) -> dict:
+        """PUT /publications/{id} — full-object update. Partial-update MCP
+        tools read the current publication, apply their change to `dto`, and
+        call this."""
+        files: dict = {"dto": (None, json.dumps(dto), "application/json")}
+        if cover_bytes is not None:
+            files["jpeg_file"] = (cover_filename, cover_bytes, "image/jpeg")
+        resp = await self._request(
+            "PUT",
+            f"/api/service/publications/{publication_id}",
+            files=files,
+            deadline=60.0,
+        )
+        return resp.json()
+
+    async def delete_publication(self, publication_id: str) -> dict:
+        """DELETE /publications/{id} — removes publication + every chapter + blobs."""
+        resp = await self._request(
+            "DELETE",
+            f"/api/service/publications/{publication_id}",
+            deadline=60.0,
+        )
+        return resp.json()
+
+    async def delete_chapter(self, publication_id: str, chapter_id: str) -> dict:
+        """DELETE /publications/{id}/chapters/{chapterId}."""
+        resp = await self._request(
+            "DELETE",
+            f"/api/service/publications/{publication_id}/chapters/{chapter_id}",
+            deadline=60.0,
+        )
+        return resp.json()
+
+    async def create_chapter_from_marks(
+        self,
+        publication_id: str,
+        title: str,
+        language: str,
+        level: str,
+        marks: list[str],
+        source_audio_blob_name: str | None = None,
+    ) -> dict:
+        body: dict = {
+            "title": title,
+            "language": language,
+            "level": level,
+            "marks": marks,
+        }
+        if source_audio_blob_name:
+            body["sourceAudioBlobName"] = source_audio_blob_name
+        # The /from-marks call itself returns a Job immediately; polling
+        # happens in the caller. 240s deadline matches cwbe's
+        # jobs.upload-timeout-ms convention — conservative margin for
+        # queueing under load.
+        resp = await self._request(
+            "POST",
+            f"/api/service/publications/{publication_id}/chapters/from-marks",
+            json=body,
+            deadline=240.0,
+        )
         return resp.json()
 
     async def get_job(self, job_id: str) -> dict:

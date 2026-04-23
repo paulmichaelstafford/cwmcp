@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 CWBE_URL = "https://be.collapsingwave.com"
+GRAFANA_URL = "https://grafana.collapsingwave.com"
 DEFAULT_CONFIG_PATH = str(Path.home() / ".cwmcp" / "config.properties")
 REQUIRED_FIELDS = ["cwbe_user", "cwbe_password", "content_path"]
 
@@ -17,6 +18,11 @@ class Config:
     cwbe_password: str
     content_path: str
     cwbe_url: str = CWBE_URL
+    # Optional — only needed for Loki log queries when debugging /from-marks
+    # failures. Leave blank if you don't need log access.
+    grafana_url: str = GRAFANA_URL
+    grafana_user: str = ""
+    grafana_password: str = ""
 
 
 def load_config(path: str = DEFAULT_CONFIG_PATH) -> Config:
@@ -41,4 +47,7 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> Config:
         cwbe_user=props["cwbe_user"],
         cwbe_password=props["cwbe_password"],
         content_path=props["content_path"],
+        grafana_url=props.get("grafana_url", GRAFANA_URL),
+        grafana_user=props.get("grafana_user", ""),
+        grafana_password=props.get("grafana_password", ""),
     )
