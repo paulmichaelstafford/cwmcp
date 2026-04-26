@@ -93,6 +93,51 @@ class CwbeClient:
         )
         return resp.json()
 
+    async def validate_marks(
+        self,
+        language: str,
+        level: str,
+        marks: list[str],
+    ) -> dict:
+        """POST /chapters/validate-marks — dry-run the full Gemini pipeline
+        (translate + align + gloss + validation) without TTS or DB persist.
+        Returns {ok: bool, issues: [{markIndex, kind, targetLanguage, ...}]}
+        with all problems surfaced at once (not fail-fast).
+
+        Cheap to call repeatedly: Gemini calls populate the same cache the
+        eventual /from-marks call reads from, so validate prepays the cache.
+        Awesome-align is local and not cached — it re-runs each validate, but
+        it's fast enough not to matter for normal iteration.
+        """
+        resp = await self._request(
+            "POST",
+            "/api/service/chapters/validate-marks",
+            json={"language": language, "level": level, "marks": marks},
+            deadline=240.0,
+        )
+        return resp.json()
+
+    async def clear_gemini_cache(self) -> dict:
+        """DELETE /debug/gemini/cache — wipe the Gemini sentence + token cache.
+        Use sparingly; primary case is recovery from a poisoned cache state
+        or testing cold-cache behaviour."""
+        resp = await self._request(
+            "DELETE",
+            "/api/service/debug/gemini/cache",
+            deadline=30.0,
+        )
+        return resp.json() if resp.text else {"ok": True}
+
+    async def get_gemini_cache_stats(self) -> dict:
+        """GET /debug/gemini/cache/stats — Caffeine stats (hit rate, size,
+        evictions) for both sentence + token caches."""
+        resp = await self._request(
+            "GET",
+            "/api/service/debug/gemini/cache/stats",
+            timeout=30,
+        )
+        return resp.json()
+
     async def gloss_tokens(
         self,
         source_language: str,

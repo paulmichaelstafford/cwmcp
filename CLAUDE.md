@@ -86,7 +86,9 @@ In marks.json, the `paragraph` field groups marks for audio pause duration (800m
 
 **Response:** a `Job` with `status=PROCESSING`. The MCP tool polls `GET /api/service/jobs/{jobId}` every 5s until `COMPLETED` or `FAILED`. On success, `storedDataId` (returned as `chapter_id` by the tool) holds the created chapter's UUID. To build the other 8 variants of the same story chapter, repeat the call with a different `language` and the corresponding `marks` in that language. If the same `(publication, language, level, title)` already exists, the call skips the work and returns that chapter's UUID — safe to retry.
 
-**Retry after failure:** translations are not cached (Gemini is cheap enough to re-run). The Job `message` (and cwbe logs) contains `sourceAudioBlobName=...` for that specific call — pass it back as `source_audio_blob_name` to skip re-TTS on retry. The blob name is **per-call**: it belongs to one source language, so don't reuse it across different `language` calls.
+**Retry after failure:** Gemini sentence translations and per-token glosses are cached server-side per `(text, source_lang, target_lang)` cell — retries only re-call Gemini for cells not already cached. Blank Gemini responses are intentionally **not** cached, so a transient empty stays eligible for re-fetch. Awesome-align is local and not cached; it re-runs each call (fast). The Job `message` (and cwbe logs) contains `sourceAudioBlobName=...` for that specific call — pass it back as `source_audio_blob_name` to skip re-TTS on retry. The blob name is **per-call**: it belongs to one source language, so don't reuse it across different `language` calls.
+
+**Validate before you ship.** Always run `validate_marks` before `create_chapter_from_marks`. Validate runs the full Gemini pipeline (translate + align + gloss + validation) without TTS or DB writes, returns **all** issues at once (not fail-fast), and warms the same Gemini cache the real ingest reads from. So the eventual `/from-marks` call is mostly cache hits — validate prepays the Gemini work. Stop and rewrite after one validate failure; don't re-run `/from-marks` against a known-broken mark and burn TTS time.
 
 ### Concurrency Cap — one chapter at a time, no concurrent runs
 
@@ -121,6 +123,18 @@ The sections below describe how marks should be written. They are enforced by **
 - **cwmcp** is a thin trigger — `create_chapter_from_marks` ships whatever strings it receives, no validation.
 - **cwbe** runs the pipeline on whatever it receives; it only rejects structurally invalid input (blank marks, count mismatches).
 
+### Hand-author marks. Never write a splitter script.
+
+When converting a `chapter.md` into the `marks` list for `create_chapter_from_marks`, **do it by hand, mark by mark, in your own message** — read the chapter, write each sentence-level mark inline as part of the tool call. Do **not**:
+
+- write a Python "sentence splitter" script (in `/tmp/`, in the repo, anywhere) and pipe chapter.md through it
+- regex-split on `.!?。！？` and call it good
+- batch-process multiple chapters through automation
+
+**Why:** the splitting rules need per-language judgment that a script can't apply correctly. Examples that bit us on Ministry of Quiet ch4: German `„`/`"` quote pairs broke a generic ASCII-quote toggler; Korean `.` vs Japanese `。` need different splitters; merging short fragments produced `"Une phrase... Elias l'a rejouée. Puis rejouée encore."` which Gemini's structured-output translation returned **empty** for several target langs, dropping awesome-align coverage to 65% and failing the ingest. A script that "works" on EN/FR/ES will silently produce broken marks for CJK or German.
+
+**How to apply:** for each `(lang, level)` chapter, open `chapter.md`, then in the same assistant turn write the `marks=[...]` argument with one sentence per element, applying the alignment-friendly rules (5+ words, no lone-punctuation marks, no 3+ glued sentences in one mark) by eye. 18 combos = 18 inline-authored marks lists, one per `create_chapter_from_marks` call. Slower than scripting, but the only approach that produces alignment-clean output across all 9 languages.
+
 The rules live here because sessions inside this repo are typically Claude sessions helping author or review marks. Claude reads these rules and applies them before calling the endpoint. Nothing in the codebase enforces them — if Claude ignores them, a bad chapter ships.
 
 **Canonical home:** `cwaudio/CLAUDE.md` + each publication's readme. If those differ from what's here, they win.
@@ -145,6 +159,19 @@ These rules make CJK alignment fast and reliable. Follow them when writing `text
 - **Avoid idioms and phrasal verbs.** "hold back" must map as a unit to a CJK expression. "restrain" is cleaner — it maps 1:1 to a single verb.
 - **Minimize function words.** "right where he stood" is 5 English words that map to 3 Japanese characters. Dense source text with small words (the, a, of, to, by) drags down source coverage because they have no CJK counterpart to pair with.
 - **Write like a subtitle.** Direct, concrete, name-heavy prose aligns easily. Literary flourishes are the enemy of CJK alignment.
+
+### Patterns that wreck alignment (verified failures from Ministry of Quiet ch4)
+
+These four patterns compound — any one of them survivable, all four together produced a 25%-failure-rate chapter where ch1-3 shipped clean. Avoid them when **rewriting** a chapter from `text/original.txt` into the per-lang/level `chapter.md` files:
+
+1. **Em-dash framing detours.** Constructions like `"Il ressentait autre chose — quelque chose de chaud..."`, `"Stattdessen regte sich etwas Namenloses unter seinen Rippen — ein Empfinden..."`, `"波形の中の何か――荒々しく..."` create a non-existent boundary in the source that the target language inlines or omits. Awesome-align maps to nothing on one side. **Fix:** drop the em-dash, use a comma or split into two short sentences. `"Il ressentait quelque chose de chaud, sans nom dans son vocabulaire."` aligns; `"Il ressentait autre chose — quelque chose de chaud..."` doesn't.
+2. **Heavy fragmentation in the source.** Sequences like `"Voces. Muchas voces."`, `"Des voix. Beaucoup de voix."`, `"声だった。たくさんの声。"` force the marks-author to merge fragments — and merging is where structural errors creep in (multi-sentence marks confuse Gemini, comma-merging changes semantics). **Fix:** at rewrite time, join fragments with conjunctions or commas in chapter.md itself. `"Eran voces, muchas voces que hablaban al mismo tiempo."` ships clean; `"Voces. Muchas voces."` forces a downstream merge.
+3. **Abstract phrasings.** `"esisteva per impedire"` (DE alignment 64%), `"the system had no category for"`, `"system이 분류할 수 없는 감각"`. Awesome-align is a word-co-occurrence statistic — abstract concepts have many valid translations sharing no surface form. **Fix:** prefer concrete equivalents. `"La Concordia quería impedir esto"` (CONCRETE: subject + verb + object) aligns; `"era todo lo que La Concordia existía para prevenir"` (ABSTRACT: existential framing) doesn't.
+4. **Multi-sentence quoted blocks.** `"L'étiquette disait : « Non approuvé. Rassemblement public. Date inconnue. »"` — three short fragments inside one quote. When this lands as a single mark, Gemini's structured-output translation occasionally returns `""` for some target langs, dropping alignment coverage to 0% for that mark. **Fix:** rewrite the quote as a single statement: `"L'étiquette disait que c'était une réunion publique non approuvée, sans date connue."`
+
+**How to apply during chapter rewriting:** when you generate the per-lang/level chapter.md from `text/original.txt`, run a final sweep for these four patterns. If you find any, rewrite — don't push the problem downstream to the marks-authoring step. The chapter author has full context and can pick a clean alignment-friendly phrasing; the marks-author later only sees the finished chapter.md and has to merge fragments mechanically, which is where the failures originate. Each publication's readme should also call these out (see `update_publication_readme` MCP tool).
+
+**Always validate before shipping.** After authoring marks (whether from chapter.md or fresh), call `validate_marks(language, level, marks)` first. It returns a structured issue list — `BLANK_TRANSLATION`, `TARGET_COVERAGE` / `SOURCE_COVERAGE` (with the actual % vs the 70%/40% threshold), `MISSING_LANGUAGES`, `BAD_ALIGNMENT_RANGE`, `NO_ALIGNMENTS`, `EMPTY_TOKENS` — for every problem in one pass, not fail-fast. Rewrite, validate again, repeat until `ok: true`. Then `create_chapter_from_marks` runs against a warm Gemini cache and is mostly TTS + persist. The Ministry of Quiet ch4 KO/B2 failure (4 wasted ingest attempts × full Gemini re-runs) is exactly what validate-first prevents. Rule of thumb: if validate fails twice on the same shape, **rewrite the chapter.md** — don't keep re-validating against the same broken pattern.
 
 ## Localization Rules
 
@@ -176,9 +203,10 @@ All TTS generation is handled by cwtts, which is invoked internally by cwbe duri
 
 ## Available MCP Tools
 
-Twenty tools, grouped by purpose.
+Twenty-three tools, grouped by purpose.
 
 **Create + trigger (the default path):**
+- `validate_marks(language, level, marks)` — **run before every `create_chapter_from_marks`.** Dry-runs the full Gemini pipeline (translate + align + gloss + validation) with no TTS / DB writes; returns all issues at once. Warms the Gemini cache the real ingest reads from. Cheap, idempotent.
 - `create_chapter_from_marks` — POSTs `/chapters/from-marks`, polls the Job until terminal, returns `chapter_id` on success or `sourceAudioBlobName=...` in the `message` on failure for retry.
 
 **Read cwbe:**
@@ -211,6 +239,8 @@ Twenty tools, grouped by purpose.
 
 **Diagnostics:**
 - `query_logs` — scrape Grafana Loki by job ID, substring, or raw LogQL. Primary use: pull `sourceAudioBlobName=...` from a failed `/from-marks` job log so you can retry.
+- `gemini_cache_stats` — Caffeine stats (hit rate, size, evictions) for cwbe's Gemini sentence + token caches. Use to confirm cache key parity between `validate_marks` and `/from-marks`, or to diagnose unexpectedly-cold ingests.
+- `clear_gemini_cache` — wipe both Gemini caches. Recovery / cold-cache testing only; not normal-use.
 
 ## Debugging `/chapters/from-marks` via Grafana Loki
 

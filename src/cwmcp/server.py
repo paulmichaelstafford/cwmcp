@@ -209,6 +209,74 @@ async def create_chapter_from_marks(
 
 
 @mcp.tool()
+@_log_call("validate_marks")
+async def validate_marks(language: str, level: str, marks: list[str]) -> str:
+    """Dry-run a `/from-marks` ingest without TTS or DB persistence. Runs
+    the full Gemini pipeline (sentence translate + awesome-align + token
+    gloss) and returns every validation issue found, at once.
+
+    **Use this BEFORE every `create_chapter_from_marks` call.** It costs
+    only Gemini reads (which populate the same cache the real ingest reads
+    from) and catches all of: blank Gemini translations, EU↔EU alignment
+    coverage below threshold (70%), CJK token failures, missing target
+    languages, bad alignment ranges. The eventual ingest then runs against
+    a warm cache — Gemini work is essentially prepaid.
+
+    Returns the cwbe `ValidationResult` (top-level `ok`, `issues[]`, `stats`).
+    Each issue has at least `kind`, `message`, and a `markIndex` (null for
+    whole-batch issues). Coverage and missing-language issues carry useful
+    extras under `context`. Full schema in Swagger:
+    `https://be.collapsingwave.com/api/open/swagger-ui.html` →
+    `service-controller` → `POST /chapters/validate-marks` →
+    `ValidationResult` model.
+
+    Issue `kind` values worth recognising at decision time:
+      - BLANK_TRANSLATION → Gemini returned empty for that target.
+      - SOURCE_COVERAGE / TARGET_COVERAGE → awesome-align below 70% (EU)
+        or 40% (CJK). `context.coverage` and `context.minimum` are percent.
+      - MISSING_LANGUAGES → some target langs absent. `context.missing` lists them.
+      - EMPTY_TOKENS → cwseg produced no tokens (degenerate input).
+
+    Args:
+        language: Source language code (EN | FR | ES | DE | IT | PT | ZH | JA | KO).
+        level: B1 | B2.
+        marks: Pre-split sentence list in the source language. No blanks.
+    """
+    if not marks:
+        raise ValueError("marks list cannot be empty")
+    if any(not m.strip() for m in marks):
+        raise ValueError("mark text cannot be blank")
+    result = await get_client().validate_marks(language.upper(), level.upper(), marks)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+@_log_call("clear_gemini_cache")
+async def clear_gemini_cache() -> str:
+    """Wipe cwbe's Gemini sentence + token caches. Use sparingly — primary
+    cases are recovery from a poisoned cache state or forcing a cold-cache
+    re-run for testing. Normal day-to-day work should never need this.
+
+    Schema in Swagger → `service-controller` →
+    `DELETE /debug/gemini/cache`."""
+    result = await get_client().clear_gemini_cache()
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+@_log_call("gemini_cache_stats")
+async def gemini_cache_stats() -> str:
+    """Caffeine stats (hit rate, size, evictions) for cwbe's Gemini sentence
+    and token caches. Useful for debugging unexpected validate/ingest costs
+    or confirming cache key parity between validate and `/from-marks`.
+
+    Schema in Swagger → `service-controller` →
+    `GET /debug/gemini/cache/stats`."""
+    result = await get_client().get_gemini_cache_stats()
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
 @_log_call("generate_audio")
 async def generate_audio(language: str, marks: list[str]) -> str:
     """Break-glass: call cwtts directly to generate audio for a single

@@ -36,12 +36,25 @@ if [ ! -d "$content_path" ]; then
     fi
 fi
 
+# Optional: Grafana — only used by query_logs for cwbe debugging.
+echo ""
+echo "Grafana (optional, for query_logs / cwbe debugging — leave blank to skip):"
+read -p "  grafana user: " grafana_user
+grafana_password=""
+if [ -n "$grafana_user" ]; then
+    read -s -p "  grafana password: " grafana_password
+    echo ""
+fi
+
 mkdir -p "$CONFIG_DIR"
 cat > "$CONFIG_FILE" <<EOF
 # cwmcp configuration
 cwbe_user=$cwbe_user
 cwbe_password=$cwbe_password
 content_path=$content_path
+grafana_url=https://grafana.collapsingwave.com
+grafana_user=$grafana_user
+grafana_password=$grafana_password
 EOF
 
 chmod 600 "$CONFIG_FILE"

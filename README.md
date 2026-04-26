@@ -31,8 +31,9 @@ mkdir -p ~/.cwmcp
 cp config.example.properties ~/.cwmcp/config.properties
 ```
 
-- `cwbe_user` / `cwbe_password`: Your cwbe service account credentials
-- `content_path`: Path to directory containing `onetime/` and `continuous/` book folders
+- `cwbe_user` / `cwbe_password`: cwbe service account credentials.
+- `content_path`: Path to directory containing `onetime/` and `continuous/` book folders.
+- `grafana_user` / `grafana_password` (optional): Grafana Viewer credentials, used only by `query_logs` to debug failed `/from-marks` jobs.
 
 ### 3. Register with Claude Code
 
@@ -51,36 +52,29 @@ Add to your Claude Code MCP settings:
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `list_books` | List all books with publication IDs |
-| `chapter_status` | Check what files exist locally for a chapter |
-| `check_coverage` | Report alignment coverage for a translations.json |
-| `align_text` | Test awesome-align on a single text pair |
-| `build_translations` | Build translations.json using Azure Translate + awesome-align |
-| `upload_chapter` | Upload a single lang/level combo |
-| `upload_batch` | Upload all ready combos for a chapter |
+The default chapter-creation path is `validate_marks` followed by `create_chapter_from_marks`. Everything else is read-only diagnostics or break-glass.
+
+**Default path:**
+- `validate_marks(language, level, marks)` — dry-run the Gemini pipeline (no TTS / no DB writes); returns all validation issues at once and warms cwbe's Gemini cache.
+- `create_chapter_from_marks(publication_id, title, language, level, marks, source_audio_blob_name=None)` — full ingest: TTS → Gemini translate → awesome-align → cwseg tokens → persist. Polls the resulting Job until terminal.
+
+**Read cwbe:** `list_publications`, `list_uploaded_chapters`, `get_publication_readme`, `download_chapters`.
+
+**Publication CRUD:** `create_publication`, `update_publication_readme`, `update_publication_titles`, `update_publication_flags`, `delete_publication`.
+
+**Chapter CRUD:** `update_chapter_metadata`, `delete_chapter`.
+
+**Break-glass lego blocks** (one-call wrappers around individual cwbe service endpoints; use to assemble a chapter manually): `generate_audio`, `translate_texts`, `align`, `gloss_tokens`, `upload_chapter_from_zip`.
+
+**Local content navigation:** `list_books`, `chapter_status`.
+
+**Diagnostics:** `query_logs` (Grafana Loki), `gemini_cache_stats`, `clear_gemini_cache`.
+
+For full descriptions and the exact response shapes, see `CLAUDE.md` and the cwbe Swagger UI at `https://be.collapsingwave.com/api/open/swagger-ui.html`.
 
 ## Content Directory Layout
 
-The `content_path` should contain:
-
-```
-content_path/
-├── onetime/
-│   └── book-name/
-│       ├── README.md          # Must contain: **Publication ID (cwbe):** <uuid>
-│       └── chapter-NNNN-slug/
-│           └── en/b1/
-│               ├── chapter.md
-│               ├── audio.mp3
-│               ├── marks.json
-│               ├── marks_in_milliseconds.json
-│               └── translations.json
-└── continuous/
-    └── book-name/
-        └── ...
-```
+The `content_path` should contain `onetime/` and/or `continuous/` book folders. Each book folder needs a `README.md` (or similar) whose first heading section contains `**Publication ID (cwbe):** <uuid>` so cwmcp can map the local folder to its cwbe publication. Per-chapter content lives under `chapter-NNNN-slug/<lang>/<level>/chapter.md`. cwbe owns audio, marks, translations and alignments — those don't need to exist locally for the default `/from-marks` path.
 
 ## License
 
