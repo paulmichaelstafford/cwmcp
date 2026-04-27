@@ -23,6 +23,7 @@ from cwmcp.tools.publications import (
     update_publication_titles as _update_publication_titles,
 )
 from cwmcp.tools.query_logs import query_logs as _query_logs
+from cwmcp.tools.sanity import chapter_release_sanity_check as _chapter_release_sanity_check
 from cwmcp.tools.upload_chapter_from_zip import upload_chapter_from_zip as _upload_chapter_from_zip
 
 
@@ -578,6 +579,45 @@ async def update_chapter_metadata(publication_id: str, chapter_id: str, title: s
         publication_id, chapter_id, title, language.upper(), level.upper(),
     )
     return json.dumps({"ok": True, "job_id": result.get("id", "")})
+
+
+@mcp.tool()
+@_log_call("chapter_release_sanity_check")
+async def chapter_release_sanity_check(publication_id: str, title_prefix: str) -> str:
+    """Verify a **chapter release** — all 18 variants (9 langs × 2 levels)
+    of one story chapter. Run this **after every chapter release** as the
+    final sign-off before declaring the chapter done.
+
+    Downloads each variant zip and checks structural integrity:
+      - All 18 (lang, level) combos present.
+      - mark UUIDs consistent across `marks.json`,
+        `mark_ids_to_translation.json`, and `marks_in_milli_seconds.json`.
+      - Mark timings strictly monotonic.
+      - Each mark has exactly the 8 expected target languages.
+      - No blank target translations (the bug class that bit Ministry of
+        Quiet ch4).
+      - EU↔EU pairs have non-empty `tokenAlignments` with in-bounds ranges.
+      - CJK pairs have non-empty `tokens` (no stray alignments).
+      - `audio.mp3` present and non-trivial in size.
+
+    Args:
+        publication_id: Publication UUID.
+        title_prefix: Title prefix that matches all 18 variants of the
+            story chapter (e.g. "0005 - " for Iliad ch5). Variants are
+            matched by `title.startswith(title_prefix)`.
+
+    Returns the report shape (top-level `ok`, `variants_found`,
+    `missing_combos`, `errors`, `warnings`, `variants[]`). `ok=true`
+    means every variant passed and all 18 combos are present.
+
+    This check is **structural only** — it does not verify the audio
+    language matches the chapter language (use Whisper `tiny` separately
+    for that) or that translations are semantically correct (manual
+    review)."""
+    result = await _chapter_release_sanity_check(
+        get_client(), publication_id=publication_id, title_prefix=title_prefix,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
 
 
 @mcp.tool()

@@ -66,6 +66,14 @@ In marks.json, the `paragraph` field groups marks for audio pause duration (800m
 - Coverage thresholds: 70% European-European, 40% involving CJK
 - cwbe URL is hardcoded: https://be.collapsingwave.com (Swagger + Grafana access documented in the Diagnostics & Access section at the top)
 
+### Terminology — "chapter release"
+
+A **chapter release** is one story chapter shipped across all 18 variants
+(9 langs × 2 levels) — the unit of work. "Ch5 release of the Iliad" =
+all 18 variants of "0005 - The Duel of Paris and Menelaus" live in
+cwbe. A release is **complete** when every combo has been ingested
+*and* the **chapter release sanity check** (below) returns `ok: true`.
+
 ## Preferred Way to Create a Chapter — `/chapters/from-marks`
 
 **This is the only path.** One cwbe call creates **one chapter variant** (one language, one level) from pre-split marks: cwbe generates audio via cwtts, translates the marks to the other 8 languages via Gemini Flash-Lite and attaches them to the chapter's marks for in-app reading, aligns EU targets via awesome-align (CJK targets get `cwseg` tokens + Gemini per-token glosses at ingest), and persists. To build all 9 language variants of a chapter, the orchestrator calls this endpoint **once per source language** — in parallel is fine (be gentle on hardware — **max 2 concurrent chapters**, see Concurrency Cap below).
@@ -203,11 +211,12 @@ All TTS generation is handled by cwtts, which is invoked internally by cwbe duri
 
 ## Available MCP Tools
 
-Twenty-three tools, grouped by purpose.
+Twenty-four tools, grouped by purpose.
 
 **Create + trigger (the default path):**
 - `validate_marks(language, level, marks)` — **run before every `create_chapter_from_marks`.** Dry-runs the full Gemini pipeline (translate + align + gloss + validation) with no TTS / DB writes; returns all issues at once. Warms the Gemini cache the real ingest reads from. Cheap, idempotent.
 - `create_chapter_from_marks` — POSTs `/chapters/from-marks`, polls the Job until terminal, returns `chapter_id` on success or `sourceAudioBlobName=...` in the `message` on failure for retry.
+- `chapter_release_sanity_check(publication_id, title_prefix)` — **run after every chapter release.** Downloads all 18 variants matching the title prefix and verifies structural integrity (mark UUIDs, monotonic timings, complete target-lang coverage, non-empty alignments/tokens, in-bounds ranges, audio present). Returns `ok: true` only when every variant passes.
 
 **Read cwbe:**
 - `list_publications` — all publications with IDs, titles, types.
@@ -279,82 +288,62 @@ curl -sS -u "$grafana_user:$grafana_password" \
 
 then call `create_chapter_from_marks` again with the same `marks` + `title` + `language` + `level`, plus `source_audio_blob_name` from the logs. If the chapter already exists from a prior run, the call short-circuits and returns its UUID.
 
-## Verifying a Chapter (non-audio QA)
+## Verifying a Chapter Release
 
-After a `/from-marks` call (or any ingest) succeeds, don't trust that `COMPLETED` means "good" — it only means "persisted". Audio QA is a separate listening pass. Use this checklist for the **non-audio** parts: text, translations, alignments, tokens, and consistency.
+After every chapter release (all 18 variants ingested), `COMPLETED` only means "persisted" — it does not mean "good". Always run the **chapter release sanity check** as the final sign-off, and then do the audio language pass separately.
 
-**Fetch the chapter bundle.** There's no JSON-detail endpoint; use the download URL:
+### Required: `chapter_release_sanity_check`
+
+```text
+chapter_release_sanity_check(publication_id, title_prefix)
+```
+
+Pass the title prefix that uniquely identifies the release (e.g. `"0005 - "` for Iliad ch5). The tool downloads every matching variant zip and returns a structured report. **The release is not done until this returns `ok: true`.**
+
+What it checks:
+
+- All 18 (lang, level) combos are present (`missing_combos` lists any gaps).
+- Mark UUIDs are consistent across `marks.json`, `mark_ids_to_translation.json`, and `marks_in_milli_seconds.json`.
+- Mark timings are strictly monotonically increasing.
+- Each mark has exactly the 8 expected target languages — no missing, no extras, no duplicates.
+- No blank target translations (the bug class that bit Ministry of Quiet ch4).
+- EU↔EU pairs have non-empty `tokenAlignments` with all `{sourceStart, sourceEnd, targetStart, targetEnd}` ranges in-bounds for the source/target text.
+- CJK pairs (either side CJK) have non-empty `tokens` and no stray `tokenAlignments`.
+- `audio.mp3` present and non-trivial in size.
+
+It does **not** check audio language match (use Whisper, see below) or translation semantics / glossary compliance (manual review).
+
+### After the sanity check passes — audio language pass
+
+Whisper auto-detect on the first 30s of each `audio.mp3`:
 
 ```bash
-source <(grep = ~/.cwbe/config.properties | sed 's/ *= */=/g')
-URL=$(curl -sS -u "$service_user:$service_password" \
+whisper /tmp/chapter/audio.mp3 --model tiny \
+  --task transcribe --output_format json --output_dir /tmp/whisper-check \
+  --verbose False --fp16 False
+python3 -c "import json; print(json.load(open('/tmp/whisper-check/audio.json'))['language'])"
+```
+
+Whisper prints a 2-letter ISO code (`en`, `de`, `fr`, `es`, `it`, `pt`, `zh`, `ja`, `ko`) — it must equal `chapter.language.lower()`. Mismatch = TTS routing bug; check cwtts `ENGINE_ROUTES` / `FISH_AUDIO_VOICES` and grep cwtts logs for the `Generating mark` lines to see which engine+voice was actually used.
+
+The `tiny` model is enough for language ID and runs in ~1s per clip on CPU.
+
+### Manual review (no tool can replace these)
+
+- **Glossary compliance**: cross-check against `get_publication_readme` — recurring characters, places, key terms must match the publication's glossary across all chapters.
+- **No English leaking** into CJK title or body marks (proper nouns / trademarks excepted).
+- **Title-numbering scheme** (`NNNN - <localized title>`) is uniform across all chapters in the publication.
+- **Audio listening pass** — actual quality (mispronunciations, weird pauses, wrong voice). Tooling can't catch this.
+
+### Manual fetch of one variant (debugging)
+
+When you need to inspect a single variant by hand rather than running the full sanity check, the download URL is:
+
+```bash
+source <(grep = ~/.cwmcp/config.properties | sed 's/ *= */=/g')
+URL=$(curl -sS -u "$cwbe_user:$cwbe_password" \
   "https://be.collapsingwave.com/api/service/publications/<pubId>/chapters/<chapId>/download-url" | tr -d '"')
 curl -sSL "$URL" -o /tmp/chapter.zip && unzip -o /tmp/chapter.zip -d /tmp/chapter/
 ```
 
-You'll get `audio.mp3`, `marks.json`, `marks_in_milliseconds.json`, `translations.json`. Inspect the three JSON files — that's everything non-audio.
-
-**Or** for bulk: use the `download_chapters` MCP tool to grab every chapter in the publication at once.
-
-### Checks
-
-1. **Title + metadata**
-   - Title follows `NNNN - <localized title>` pattern (e.g. `0004 - D.B. Cooper`, `0003 - Das Handbuch des Giftmischers`).
-   - Language-specific title matches what the publication glossary prescribes — cross-check against `get_publication_readme`.
-   - `language` and `level` on the chapter record match what you requested.
-
-2. **Mark count + text**
-   - Mark count matches the source marks you sent (14 in, 14 out — cwbe rejects mismatches, but double-check).
-   - Every mark's `text` is non-empty and at least 5 words (alignment-friendliness rule). Short sentences are the #1 cause of bad alignment downstream.
-   - Proper nouns and numbers preserved from the source (`Cooper`, `Boeing 727`, `1971`, `$200,000`).
-
-3. **Language + level match** (covers both the chapter record and the translations block)
-   - Chapter record's `language` matches what you requested and `level` is exactly `B1` or `B2` as requested. Mismatch = bug — reject.
-   - For each source mark in `translations.json`, the `language` field equals the chapter's language (all 14 source marks agree).
-   - For each mark, the set of target languages in `translationResults[].language` is **exactly** `{EN, FR, ES, DE, IT, PT, ZH, JA, KO} − chapter.language` — no duplicates, no missing, no extras.
-   - Spot-check that the source `text` is actually in the claimed language (e.g. a DE chapter should have `ü/ß`, not ASCII-only English). Quick tell: if a "DE" mark looks English, you sent the wrong marks list.
-
-4. **Audio language** — verify the `audio.mp3` is actually spoken in the claimed language (TTS routing bug, wrong voice clone, or caller sent wrong marks can all silently produce "German" audio that's actually English). Use Whisper's auto-detect on the first 30s — fast and local:
-
-   ```bash
-   # Omit --language to trigger auto-detection (openai-whisper's CLI has no
-   # "auto" value — you just leave the flag off).
-   whisper /tmp/chapter/audio.mp3 --model tiny \
-     --task transcribe --output_format json --output_dir /tmp/whisper-check \
-     --verbose False --fp16 False
-   python3 -c "import json; print(json.load(open('/tmp/whisper-check/audio.json'))['language'])"
-   ```
-
-   Whisper prints a 2-letter ISO code (`en`, `de`, `fr`, `es`, `it`, `pt`, `zh`, `ja`, `ko`) — it must equal `chapter.language.lower()`. Mismatch = reject + investigate (check cwtts `ENGINE_ROUTES` and `FISH_AUDIO_VOICES`; grep cwtts logs for the `Generating mark` lines to see which engine+voice was actually used).
-
-   For bulk verification across many chapters, the `tiny` model is enough — language ID doesn't need a big model and runs in ~1s per clip on CPU.
-
-5. **Translations content (`translations.json`)** — one entry per source mark, each with a `translationResults` array of 8 entries (one per OTHER language).
-   - **Non-empty text**: every target has a non-blank `text` field.
-   - **Looks translated**: no raw English leaking into CJK variants (except proper nouns), no `\uXXXX` escapes or HTML entities, no placeholder strings.
-   - **Glossary compliance**: key terms (character names, places, concepts) match the publication README's glossary across all chapters.
-
-6. **Alignments / tokens** (inside each `translationResults` entry)
-   - **EU → EU pairs** (e.g. EN→FR, DE→IT): `tokenAlignments` is a non-empty list of `{sourceStart, sourceEnd, targetStart, targetEnd}` per word pair. Isolated empty lists are tolerated (awesome-align can fail per-mark); a chapter where most EU targets are empty is suspicious — grep the logs for `awesome-align failed`.
-   - **Any pair involving CJK** (EN→ZH, ZH→KO, etc.): `tokenAlignments` is `[]` on purpose. Instead, `tokens` is populated — a list of `{text: "..."}` entries representing the CJK segmentation. Check:
-     - `tokens` list is non-empty.
-     - Tokens are sensible units, not one big blob. For ZH, expect jieba-style word segmentation (multi-char words + single chars). For JA, expect fugashi tokens (mix of kanji compounds + kana). For KO, expect kiwipiepy tokens (eojeol-like spans).
-     - Concatenating all `tokens[].text` in order should reconstruct the target text (modulo whitespace).
-
-7. **Mark timings (`marks_in_milliseconds.json`)**
-   - Every mark UUID from `marks.json` appears as a key.
-   - Values are strictly monotonically increasing (mark N's start < mark N+1's start).
-   - No wild outliers (e.g. a 2-second mark next to a 30-second one with the same word count suggests a TTS anomaly worth a listen).
-
-8. **Cross-chapter consistency** (compare against other chapters in the same publication)
-   - A recurring character/place is translated the same way chapter-to-chapter. If chapter 1's DE calls the protagonist "Winston" and chapter 5 calls him "Wilhelm", one is wrong — fix per the README glossary.
-   - Title-numbering scheme (`NNNN -`) is uniform across all chapters in the publication.
-
-### Red flags (reject + retry)
-
-- Any `translationResults` missing a target language.
-- CJK variant with empty `tokens`.
-- English leaked into a CJK title or body mark (except proper nouns / trademarks).
-- Translation text full of `\uXXXX` escapes, HTML entities, or a placeholder like `[en] fake`.
-- Non-monotonic or inverted timings in `marks_in_milliseconds.json`.
-- Coverage-warning logs for the run: grep `awesome-align failed for mark` in Loki; one or two per chapter is fine, most marks failing means the source text is bad (too short / punctuation-heavy).
+The zip contains `audio.mp3`, `marks.json`, `marks_in_milli_seconds.json`, and `mark_ids_to_translation.json` (a dict keyed by mark UUID, *not* a list). Coverage-warning sweep: grep Loki for `awesome-align failed for mark` (or use `query_logs`); one or two per chapter is fine, most marks failing means the source text is bad (too short / punctuation-heavy).

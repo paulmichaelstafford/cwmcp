@@ -57,6 +57,7 @@ The default chapter-creation path is `validate_marks` followed by `create_chapte
 **Default path:**
 - `validate_marks(language, level, marks)` — dry-run the Gemini pipeline (no TTS / no DB writes); returns all validation issues at once and warms cwbe's Gemini cache.
 - `create_chapter_from_marks(publication_id, title, language, level, marks, source_audio_blob_name=None)` — full ingest: TTS → Gemini translate → awesome-align → cwseg tokens → persist. Polls the resulting Job until terminal.
+- `chapter_release_sanity_check(publication_id, title_prefix)` — run after every chapter release; downloads all 18 variants matching the prefix (e.g. `"0005 - "`) and verifies structural integrity. Returns `ok: true` only when every variant passes.
 
 **Read cwbe:** `list_publications`, `list_uploaded_chapters`, `get_publication_readme`, `download_chapters`.
 
