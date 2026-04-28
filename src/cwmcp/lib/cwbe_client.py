@@ -138,6 +138,43 @@ class CwbeClient:
         )
         return resp.json()
 
+    async def validate_chapter_glosses(
+        self,
+        publication_id: str,
+        chapter_id: str,
+    ) -> dict:
+        """POST /publications/{pubId}/chapters/{chapId}/validate-glosses —
+        LLM-as-judge over an existing chapter's baked-in per-token glosses.
+        No regloss / write. Returns a ValidationResult-shaped dict where
+        any WRONG_SENSE_GLOSS issue carries the suggested correction in
+        `context.suggestedGloss`. CJK source only — non-CJK returns empty
+        issues immediately."""
+        resp = await self._request(
+            "POST",
+            f"/api/service/publications/{publication_id}/chapters/{chapter_id}/validate-glosses",
+            deadline=240.0,
+        )
+        return resp.json()
+
+    async def regloss_chapter_tokens(
+        self,
+        publication_id: str,
+        chapter_id: str,
+    ) -> dict:
+        """POST /publications/{pubId}/chapters/{chapId}/regloss-tokens —
+        re-runs Gemini per-token glossing on an existing CJK-source chapter
+        using the current GeminiTokenTranslator prompt and overwrites the
+        stored zip blob in place. Sentence translations and alignments are
+        preserved. Non-CJK chapters return skipped=true. The shared
+        translation cache means common tokens dedupe across calls, so
+        re-glossing N chapters back-to-back gets steadily cheaper."""
+        resp = await self._request(
+            "POST",
+            f"/api/service/publications/{publication_id}/chapters/{chapter_id}/regloss-tokens",
+            deadline=240.0,
+        )
+        return resp.json()
+
     async def gloss_tokens(
         self,
         source_language: str,

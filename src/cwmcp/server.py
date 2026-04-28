@@ -252,6 +252,63 @@ async def validate_marks(language: str, level: str, marks: list[str]) -> str:
 
 
 @mcp.tool()
+@_log_call("validate_chapter_glosses")
+async def validate_chapter_glosses(publication_id: str, chapter_id: str) -> str:
+    """LLM-as-judge over an *existing* CJK-source chapter's baked-in per-token
+    glosses. Asks Gemini "is each gloss the right sense for its sentence?".
+    Does NOT re-translate, NOT re-align, NOT regloss — purely a quality check.
+
+    **Use this BEFORE deciding to call `regloss_chapter_tokens`.** If issues=[]
+    the chapter is fine — skip the regloss and save the Gemini cost. If issues
+    are present, each carries `kind=WRONG_SENSE_GLOSS`, `markIndex`, `language`
+    (target language), and `context.suggestedGloss` with the judge's preferred
+    wording.
+
+    Cheap on warm validation cache: each unique (sentence, token, gloss) triple
+    is judged once and cached forever — repeat checks on the same chapter cost
+    near zero. Non-CJK chapters return ok=true immediately (validator no-ops).
+
+    Returns the cwbe `ValidationResult` shape (`ok`, `issues[]`, `stats`).
+
+    Args:
+        publication_id: Publication UUID.
+        chapter_id: Chapter UUID.
+    """
+    result = await get_client().validate_chapter_glosses(publication_id, chapter_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+@_log_call("regloss_chapter_tokens")
+async def regloss_chapter_tokens(publication_id: str, chapter_id: str) -> str:
+    """Re-run Gemini per-token glossing on a CJK-source chapter using the
+    *current* `GeminiTokenTranslator` prompt and overwrite its stored zip
+    blob in place. Sentence translations and EU↔EU alignments are preserved
+    — only `tokens[].translations` get refreshed.
+
+    Use after `validate_chapter_glosses` reports WRONG_SENSE_GLOSS issues, or
+    proactively after a known prompt fix to refresh chapters glossed under the
+    older buggy prompt. Non-CJK chapters return `skipped=true` (no Gemini
+    glosses to regenerate).
+
+    Cost: ~€0.03 per chapter on a cold validation cache. Translation cache
+    dedupes common tokens across chapters, so re-glossing N chapters
+    back-to-back gets cheaper — chapter 1 pays full Gemini cost, chapter N
+    is mostly cache hits.
+
+    Returns `{chapterId, sourceLanguage, skipped, skipReason?, markCount,
+    cellsChanged, totalCells}`. `cellsChanged/totalCells` is the diagnostic:
+    if 0, the chapter was already correct and no change was made.
+
+    Args:
+        publication_id: Publication UUID.
+        chapter_id: Chapter UUID.
+    """
+    result = await get_client().regloss_chapter_tokens(publication_id, chapter_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
 @_log_call("clear_gemini_cache")
 async def clear_gemini_cache() -> str:
     """Wipe cwbe's Gemini sentence + token caches. Use sparingly — primary
